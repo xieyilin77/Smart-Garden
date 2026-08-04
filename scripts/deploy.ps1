@@ -24,7 +24,6 @@ if ($availableProfiles -match "smart-garden") {
     Write-Host "Using default AWS profile instead." -ForegroundColor Yellow
     Remove-Item Env:AWS_PROFILE -ErrorAction SilentlyContinue
 }
-Write-Host "Using AWS Profile: smart-garden" -ForegroundColor Cyan
 Write-Host ""
 
 # ============================================
