@@ -1,0 +1,837 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Smart Garden Manager - Serverless IoT Platform (Free Tier Optimized with SNS & CloudFront)'
+
+# ============================================
+# PARAMETER
+# ============================================
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: smart-garden
+    Description: Environment name for resource naming
+
+  S3DataBucketName:
+    Type: String
+    Default: smart-garden-data
+    Description: Unique S3 bucket name for data archiving
+
+  S3WebsiteBucketName:
+    Type: String
+    Default: smart-garden-dashboard
+    Description: Unique S3 bucket name for website hosting
+
+  S3LambdaCodeBucketName:
+    Type: String
+    Default: smart-garden-lambda
+    Description: Unique S3 bucket name for Lambda code
+
+  EmailAddress:
+    Type: String
+    Default: your-email@example.com
+    Description: Email address for SNS notifications
+
+  EnableEmailNotifications:
+    Type: String
+    Default: 'true'
+    Description: Enable email notifications (true/false)
+    AllowedValues:
+      - 'true'
+      - 'false'
+
+  EnableCloudFront:
+    Type: String
+    Default: 'true'
+    Description: Enable CloudFront distribution (true/false)
+    AllowedValues:
+      - 'true'
+      - 'false'
+
+  EnableCloudWatchAlarms:
+    Type: String
+    Default: 'true'
+    Description: Enable CloudWatch alarms (true/false)
+    AllowedValues:
+      - 'true'
+      - 'false'
+
+  LambdaTimeout:
+    Type: Number
+    Default: 30
+    Description: Lambda function timeout in seconds
+    MinValue: 3
+    MaxValue: 300
+
+  LambdaMemorySize:
+    Type: Number
+    Default: 128
+    Description: Lambda function memory in MB
+    MinValue: 128
+    MaxValue: 1024
+    AllowedValues: [128, 256, 512, 1024]
+
+  LambdaReservedConcurrency:
+    Type: Number
+    Default: 0
+    Description: Reserved concurrency for Lambda (0=unlimited, 1-100 reserved)
+    MinValue: 0
+    MaxValue: 100
+
+  DataRetentionDays:
+    Type: Number
+    Default: 30
+    Description: Number of days to retain data in S3
+    MinValue: 1
+    MaxValue: 365
+
+  SensorId:
+    Type: String
+    Default: sensor-001
+    Description: Default sensor ID
+
+# ============================================
+# CONDITIONS
+# ============================================
+Conditions:
+  EnableEmailNotifications: !Equals [!Ref EnableEmailNotifications, 'true']
+  EnableCloudFront: !Equals [!Ref EnableCloudFront, 'true']
+  EnableCloudWatchAlarms: !Equals [!Ref EnableCloudWatchAlarms, 'true']
+
+# ============================================
+# RESOURCES
+# ============================================
+Resources:
+
+  # ============================================
+  # S3 DATA BUCKET
+  # ============================================
+  DataBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${S3DataBucketName}-${AWS::AccountId}'
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: ArchiveOldData
+            Status: Enabled
+            ExpirationInDays: !Ref DataRetentionDays
+            Prefix: raw-data/
+          - Id: DeleteOldVersions
+            Status: Enabled
+            NoncurrentVersionExpirationInDays: 7
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  # ============================================
+  # S3 WEBSITE BUCKET
+  # ============================================
+  WebsiteBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${S3WebsiteBucketName}-${AWS::AccountId}'
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      WebsiteConfiguration:
+        IndexDocument: index.html
+        ErrorDocument: error.html
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        BlockPublicPolicy: false
+        IgnorePublicAcls: false
+        RestrictPublicBuckets: false
+
+  WebsiteBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref WebsiteBucket
+      PolicyDocument:
+        Statement:
+          - Sid: PublicReadGetObject
+            Effect: Allow
+            Principal: '*'
+            Action: s3:GetObject
+            Resource: !Sub '${WebsiteBucket.Arn}/*'
+
+  # ============================================
+  # S3 BUCKET POLICIES
+  # ============================================
+  DataBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref DataBucket
+      PolicyDocument:
+        Statement:
+          - Sid: AllowLambdaAccess
+            Effect: Allow
+            Principal:
+              AWS: !GetAtt LambdaExecutionRole.Arn
+            Action:
+              - s3:PutObject
+              - s3:GetObject
+              - s3:ListBucket
+            Resource:
+              - !Sub '${DataBucket.Arn}'
+              - !Sub '${DataBucket.Arn}/*'
+
+  # ============================================
+  # IAM ROLE - Lambda Execution
+  # ============================================
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${EnvironmentName}-lambda-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: SmartGardenLambdaPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # DynamoDB Permissions
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:Query
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:Scan
+                  - dynamodb:BatchWriteItem
+                Resource:
+                  - !GetAtt SensorDataTable.Arn
+                  - !GetAtt SensorLatestTable.Arn
+                  - !Sub '${SensorDataTable.Arn}/index/*'
+              
+              # S3 Permissions
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                  - s3:ListBucket
+                  - s3:GetBucketLocation
+                Resource:
+                  - !Sub '${DataBucket.Arn}'
+                  - !Sub '${DataBucket.Arn}/*'
+              
+              # SNS Permissions
+              - Effect: Allow
+                Action:
+                  - sns:Publish
+                  - sns:ListTopics
+                Resource: !Ref AlertTopic
+              
+              # IoT Permissions
+              - Effect: Allow
+                Action:
+                  - iot:DescribeEndpoint
+                  - iot:GetPolicy
+                  - iot:ListPolicies
+                  - iot:Publish
+                  - iot:Receive
+                Resource: '*'
+              
+              # CloudWatch für Custom Metrics
+              - Effect: Allow
+                Action:
+                  - cloudwatch:PutMetricData
+                  - cloudwatch:GetMetricStatistics
+                  - cloudwatch:ListMetrics
+                Resource: '*'
+              
+              # CloudWatch Logs
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - logs:DescribeLogGroups
+                  - logs:DescribeLogStreams
+                Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/*'
+
+  # ============================================
+  # IAM ROLE - IoT Topic Rule
+  # ============================================
+  IoTTopicRuleRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${EnvironmentName}-iot-rule-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: iot.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: IoTTopicRulePolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                Resource:
+                  - !Sub '${DataBucket.Arn}'
+                  - !Sub '${DataBucket.Arn}/*'
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource: !GetAtt ProcessDataFunction.Arn
+
+  # ============================================
+  # DYNAMODB TABLES
+  # ============================================
+  SensorDataTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${EnvironmentName}-sensor-data'
+      AttributeDefinitions:
+        - AttributeName: sensor_id
+          AttributeType: S
+        - AttributeName: timestamp
+          AttributeType: S
+        - AttributeName: date
+          AttributeType: S
+      KeySchema:
+        - AttributeName: sensor_id
+          KeyType: HASH
+        - AttributeName: timestamp
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: SensorDateIndex
+          KeySchema:
+            - AttributeName: sensor_id
+              KeyType: HASH
+            - AttributeName: date
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      BillingMode: PAY_PER_REQUEST
+      SSESpecification:
+        SSEEnabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+
+  SensorLatestTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${EnvironmentName}-sensor-latest'
+      AttributeDefinitions:
+        - AttributeName: sensor_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: sensor_id
+          KeyType: HASH
+      BillingMode: PAY_PER_REQUEST
+      SSESpecification:
+        SSEEnabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+
+  # ============================================
+  # AWS IOT CORE
+  # ============================================
+  IoTThing:
+    Type: AWS::IoT::Thing
+    Properties:
+      ThingName: !Sub '${EnvironmentName}-sensor'
+
+  IoTPolicy:
+    Type: AWS::IoT::Policy
+    Properties:
+      PolicyName: !Sub '${EnvironmentName}-iot-policy'
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action: iot:Connect
+            Resource: !Sub 'arn:aws:iot:${AWS::Region}:${AWS::AccountId}:client/${EnvironmentName}-*'
+          - Effect: Allow
+            Action: iot:Publish
+            Resource: !Sub 'arn:aws:iot:${AWS::Region}:${AWS::AccountId}:topic/sensor/data'
+          - Effect: Allow
+            Action: iot:Subscribe
+            Resource: !Sub 'arn:aws:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/sensor/data'
+          - Effect: Allow
+            Action: iot:Receive
+            Resource: !Sub 'arn:aws:iot:${AWS::Region}:${AWS::AccountId}:topic/sensor/data'
+
+  IoTTopicRule:
+    Type: AWS::IoT::TopicRule
+    Properties:
+      RuleName: smart_garden_rule
+      TopicRulePayload:
+        Sql: "SELECT * FROM 'sensor/data'"
+        Actions:
+          - Lambda:
+              FunctionArn: !GetAtt ProcessDataFunction.Arn
+        ErrorAction:
+          S3:
+            BucketName: !Ref DataBucket
+            Key: !Sub 'errors/${EnvironmentName}-rule-errors-${AWS::AccountId}.json'
+            RoleArn: !GetAtt IoTTopicRuleRole.Arn
+
+  # ============================================
+  # LAMBDA FUNCTIONS
+  # ============================================
+  ProcessDataFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${EnvironmentName}-process-data'
+      Runtime: python3.12
+      Handler: process_data.lambda_handler
+      Code:
+        S3Bucket: !Ref S3LambdaCodeBucketName
+        S3Key: lambda/process-data.zip
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Environment:
+        Variables:
+          LATEST_TABLE: !Ref SensorLatestTable
+          HISTORY_TABLE: !Ref SensorDataTable
+          DATA_BUCKET: !Ref DataBucket
+          SNS_TOPIC_ARN: !Ref AlertTopic
+          LOG_LEVEL: INFO
+      Timeout: !Ref LambdaTimeout
+      MemorySize: !Ref LambdaMemorySize
+      TracingConfig:
+        Mode: PassThrough
+
+  QueryDataFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${EnvironmentName}-query-data'
+      Runtime: python3.12
+      Handler: query_data.lambda_handler
+      Code:
+        S3Bucket: !Ref S3LambdaCodeBucketName
+        S3Key: lambda/query-data.zip
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Environment:
+        Variables:
+          LATEST_TABLE: !Ref SensorLatestTable
+          HISTORY_TABLE: !Ref SensorDataTable
+          DEBUG: 'false'
+          LOG_LEVEL: INFO
+      Timeout: !Ref LambdaTimeout
+      MemorySize: !Ref LambdaMemorySize
+      TracingConfig:
+        Mode: PassThrough
+
+  # ============================================
+  # LAMBDA PERMISSIONS
+  # ============================================
+  LambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ProcessDataFunction
+      Action: lambda:InvokeFunction
+      Principal: iot.amazonaws.com
+      SourceArn: !Sub 'arn:aws:iot:${AWS::Region}:${AWS::AccountId}:rule/smart_garden_rule'
+
+  # ============================================
+  # SNS - MIT EMAIL (Kostenlos im Free Tier!)
+  # ============================================
+  AlertTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub '${EnvironmentName}-alerts'
+      DisplayName: !Sub '${EnvironmentName} Alerts'
+
+  EmailSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: EnableEmailNotifications
+    Properties:
+      Protocol: email
+      TopicArn: !Ref AlertTopic
+      Endpoint: !Ref EmailAddress
+
+  # ============================================
+  # API GATEWAY
+  # ============================================
+  SensorAPI:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: !Sub '${EnvironmentName}-api'
+      Description: API for Smart Garden Manager
+      MinimumCompressionSize: 0
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+
+  SensorAPIResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref SensorAPI
+      ParentId: !GetAtt SensorAPI.RootResourceId
+      PathPart: data
+
+  SensorAPIOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref SensorAPI
+      ResourceId: !Ref SensorAPIResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type, X-Amz-Date, Authorization, X-Api-Key, X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'GET, POST, OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
+  SensorAPIGetMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref SensorAPI
+      ResourceId: !Ref SensorAPIResource
+      HttpMethod: GET
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${QueryDataFunction.Arn}/invocations'
+      MethodResponses:
+        - StatusCode: 200
+
+  SensorAPIPostMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref SensorAPI
+      ResourceId: !Ref SensorAPIResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ProcessDataFunction.Arn}/invocations'
+      MethodResponses:
+        - StatusCode: 200
+
+  SensorAPIDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - SensorAPIOptionsMethod
+      - SensorAPIGetMethod
+      - SensorAPIPostMethod
+    Properties:
+      RestApiId: !Ref SensorAPI
+      StageName: prod
+
+  QueryLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref QueryDataFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${SensorAPI}/*/GET/data'
+
+  ProcessLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ProcessDataFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${SensorAPI}/*/POST/data'
+
+  # ============================================
+  # CLOUDFRONT 
+  # ============================================
+  CloudFrontDistribution:
+    Type: AWS::CloudFront::Distribution
+    Condition: EnableCloudFront
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        DefaultRootObject: index.html
+        PriceClass: PriceClass_100
+        Origins:
+          - Id: S3Origin
+            DomainName: !GetAtt WebsiteBucket.RegionalDomainName
+            S3OriginConfig:
+              OriginAccessIdentity: ''
+        DefaultCacheBehavior:
+          TargetOriginId: S3Origin
+          ViewerProtocolPolicy: redirect-to-https
+          DefaultTTL: 86400
+          MinTTL: 3600
+          MaxTTL: 31536000
+          Compress: true
+          ForwardedValues:
+            QueryString: false
+            Cookies:
+              Forward: none
+        CacheBehaviors:
+          - PathPattern: '*.js'
+            TargetOriginId: S3Origin
+            ViewerProtocolPolicy: redirect-to-https
+            DefaultTTL: 86400
+            MinTTL: 3600
+            MaxTTL: 31536000
+            Compress: true
+            ForwardedValues:
+              QueryString: false
+              Cookies:
+                Forward: none
+          - PathPattern: '*.css'
+            TargetOriginId: S3Origin
+            ViewerProtocolPolicy: redirect-to-https
+            DefaultTTL: 86400
+            MinTTL: 3600
+            MaxTTL: 31536000
+            Compress: true
+            ForwardedValues:
+              QueryString: false
+              Cookies:
+                Forward: none
+          - PathPattern: '*.png'
+            TargetOriginId: S3Origin
+            ViewerProtocolPolicy: redirect-to-https
+            DefaultTTL: 31536000
+            MinTTL: 86400
+            MaxTTL: 31536000
+            Compress: false
+            ForwardedValues:
+              QueryString: false
+              Cookies:
+                Forward: none
+          - PathPattern: '*.jpg'
+            TargetOriginId: S3Origin
+            ViewerProtocolPolicy: redirect-to-https
+            DefaultTTL: 31536000
+            MinTTL: 86400
+            MaxTTL: 31536000
+            Compress: false
+            ForwardedValues:
+              QueryString: false
+              Cookies:
+                Forward: none
+          - PathPattern: '*.svg'
+            TargetOriginId: S3Origin
+            ViewerProtocolPolicy: redirect-to-https
+            DefaultTTL: 31536000
+            MinTTL: 86400
+            MaxTTL: 31536000
+            Compress: true
+            ForwardedValues:
+              QueryString: false
+              Cookies:
+                Forward: none
+        CustomErrorResponses:
+          - ErrorCode: 404
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+        ViewerCertificate:
+          CloudFrontDefaultCertificate: true
+
+  # ============================================
+  # CLOUDWATCH ALARME (OPTIONAL - FREE TIER)
+  # ============================================
+  LambdaErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: EnableCloudWatchAlarms
+    Properties:
+      AlarmName: !Sub '${EnvironmentName}-lambda-errors'
+      AlarmDescription: Alarm triggered when Lambda has errors'
+      MetricName: Errors
+      Namespace: AWS/Lambda
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      AlarmActions:
+        - !Ref AlertTopic
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref ProcessDataFunction
+
+  LambdaErrorAlarmQuery:
+    Type: AWS::CloudWatch::Alarm
+    Condition: EnableCloudWatchAlarms
+    Properties:
+      AlarmName: !Sub '${EnvironmentName}-lambda-errors-query'
+      AlarmDescription: Alarm triggered when Query Lambda has errors'
+      MetricName: Errors
+      Namespace: AWS/Lambda
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      AlarmActions:
+        - !Ref AlertTopic
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref QueryDataFunction
+
+  IoTConnectionAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: EnableCloudWatchAlarms
+    Properties:
+      AlarmName: !Sub '${EnvironmentName}-iot-connection'
+      AlarmDescription: Alarm triggered when IoT connection fails
+      MetricName: Connect.Success
+      Namespace: AWS/IoT
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 1
+      ComparisonOperator: LessThanThreshold
+      AlarmActions:
+        - !Ref AlertTopic
+
+  # ============================================
+  # CLOUDWATCH DASHBOARD (OPTIONAL)
+  # ============================================
+  CloudWatchDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Condition: EnableCloudWatchAlarms
+    Properties:
+      DashboardName: !Sub '${EnvironmentName}-dashboard'
+      DashboardBody: !Sub |
+        {
+          "widgets": [
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 0,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  [ "AWS/Lambda", "Invocations", "FunctionName", "${ProcessDataFunction}" ],
+                  [ "...", "${QueryDataFunction}" ]
+                ],
+                "period": 300,
+                "stat": "Sum",
+                "region": "${AWS::Region}",
+                "title": "Lambda Invocations"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 6,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  [ "AWS/Lambda", "Duration", "FunctionName", "${ProcessDataFunction}" ],
+                  [ "...", "${QueryDataFunction}" ]
+                ],
+                "period": 300,
+                "stat": "Average",
+                "region": "${AWS::Region}",
+                "title": "Lambda Duration (ms)"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 12,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  [ "AWS/Lambda", "Errors", "FunctionName", "${ProcessDataFunction}" ],
+                  [ "...", "${QueryDataFunction}" ]
+                ],
+                "period": 300,
+                "stat": "Sum",
+                "region": "${AWS::Region}",
+                "title": "Lambda Errors"
+              }
+            }
+          ]
+        }
+
+# ============================================
+# OUTPUTS
+# ============================================
+Outputs:
+  WebsiteURL:
+    Description: URL for the web dashboard
+    Value: !If
+      - EnableCloudFront
+      - !Sub 'https://${CloudFrontDistribution.DomainName}'
+      - !Sub 'http://${WebsiteBucket}.s3-website-${AWS::Region}.amazonaws.com'
+
+  WebsiteBucketName:
+    Description: S3 bucket name for website hosting
+    Value: !Ref WebsiteBucket
+
+  APIGatewayURL:
+    Description: API Gateway endpoint for data queries
+    Value: !Sub 'https://${SensorAPI}.execute-api.${AWS::Region}.amazonaws.com/prod/data'
+
+  IoTTopic:
+    Description: IoT topic for sending sensor data
+    Value: 'sensor/data'
+
+  IoTThingName:
+    Description: Name of the IoT Thing for connection
+    Value: !Ref IoTThing
+
+  IoTEndpoint:
+    Description: AWS IoT Core endpoint for connection
+    Value: !Sub '${AWS::AccountId}.iot.${AWS::Region}.amazonaws.com'
+
+  S3DataBucket:
+    Description: S3 bucket for data archiving
+    Value: !Ref DataBucket
+
+  S3WebsiteBucket:
+    Description: S3 bucket for website hosting
+    Value: !Ref WebsiteBucket
+
+  CloudFrontURL:
+    Description: CloudFront distribution URL
+    Condition: EnableCloudFront
+    Value: !GetAtt CloudFrontDistribution.DomainName
+
+  SNSTopicARN:
+    Description: SNS Topic ARN for alerts
+    Value: !Ref AlertTopic
+
+  LatestTableName:
+    Description: DynamoDB table name for latest values
+    Value: !Ref SensorLatestTable
+
+  HistoryTableName:
+    Description: DynamoDB table name for historical data
+    Value: !Ref SensorDataTable
+
+  ProcessDataFunctionName:
+    Description: Name of the Process Data Lambda function
+    Value: !Ref ProcessDataFunction
+
+  QueryDataFunctionName:
+    Description: Name of the Query Data Lambda function
+    Value: !Ref QueryDataFunction
