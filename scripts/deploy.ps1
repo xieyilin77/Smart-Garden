@@ -62,7 +62,7 @@ $DATA_BUCKET = "smart-garden-data"
 $WEBSITE_BUCKET = "smart-garden-dashboard"
 # NOTE: The Lambda bucket is created by this script and referenced in CloudFormation.
 # The bucket name must match the S3LambdaCodeBucketName parameter in smart-garden.yaml
-$LAMBDA_CODE_BUCKET = "smart-garden-lambda"  # without Account-ID!
+$LAMBDA_CODE_BUCKET = "smart-garden-lambda-$ACCOUNT_ID"
 
 Write-Host ""
 Write-Host "Account ID: $ACCOUNT_ID" -ForegroundColor Cyan

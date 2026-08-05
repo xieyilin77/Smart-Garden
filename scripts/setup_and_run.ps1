@@ -70,27 +70,14 @@ if (-not (Test-Path "./iot-policy.json")) {
     Write-Host "Creating iot-policy.json..." -ForegroundColor Cyan
     @"
 {
-    "Version": "2012-10-17",
-    "Statement": [
-        {
-            "Effect": "Allow",
-            "Action": "iot:Connect",
-            "Resource": "*"
-        },
-        {
-            "Effect": "Allow",
-            "Action": "iot:Publish",
-            "Resource": "*"
-        },
-        {
-            "Effect": "Allow",
-            "Action": [
-                "iot:Subscribe",
-                "iot:Receive"
-            ],
-            "Resource": "*"
-        }
-    ]
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": "iot:*",
+      "Resource": "*"
+    }
+  ]
 }
 "@ | Out-File -FilePath "iot-policy.json" -Encoding utf8 -Force
     Write-Host "✅ iot-policy.json created" -ForegroundColor Green

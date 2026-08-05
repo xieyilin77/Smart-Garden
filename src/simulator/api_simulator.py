@@ -14,21 +14,16 @@ import sys
 import requests
 
 # ============================================
-# CONFIGURATION - Load from environment or use defaults
+# CONFIGURATION - KORREKT
 # ============================================
 
 # Your API Gateway URL from the deployment
-# Can be set via environment variable: API_GATEWAY_URL
-# Or via command line: --api-url
-DEFAULT_API_URL = os.getenv(
-    "API_GATEWAY_URL",
-    "https://3mzxjm13j8.execute-api.us-west-2.amazonaws.com/prod/data"
-)
+DEFAULT_API_URL = "https://2v2iowda69.execute-api.us-west-2.amazonaws.com/prod/data"
 
-# Sensor configuration - can be overridden via command line
+# Sensor configuration
 SENSOR_ID = os.getenv("SENSOR_ID", "sensor-001")
 LOCATION = os.getenv("SENSOR_LOCATION", "indoor")
-INTERVAL = int(os.getenv("SENSOR_INTERVAL", "10"))  # seconds between readings
+INTERVAL = int(os.getenv("SENSOR_INTERVAL", "10"))
 
 # ============================================
 # SENSOR CLASS
@@ -82,12 +77,13 @@ def send_to_api(reading, api_url, verbose=False):
     try:
         if verbose:
             print(f"  Sending to: {api_url}")
+            print(f"  Data: {json.dumps(reading, indent=2)}")
         
         response = requests.post(
             api_url,
             json=reading,
             headers={'Content-Type': 'application/json'},
-            timeout=5
+            timeout=10
         )
         
         if response.status_code == 200:
@@ -101,7 +97,7 @@ def send_to_api(reading, api_url, verbose=False):
         else:
             print(f"  ❌ Error: HTTP {response.status_code}")
             if verbose:
-                print(f"  Response: {response.text[:200]}")
+                print(f"  Response: {response.text[:500]}")
             return False, response.status_code, None
             
     except requests.exceptions.ConnectionError:
@@ -129,12 +125,6 @@ def main():
         description='API Sensor Simulator - Sends data to API Gateway',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-Environment Variables:
-  API_GATEWAY_URL  - API Gateway URL
-  SENSOR_ID        - Sensor ID (default: sensor-001)
-  SENSOR_LOCATION  - Location (indoor/outdoor/greenhouse)
-  SENSOR_INTERVAL  - Interval in seconds (default: 10)
-
 Examples:
   # Use default settings
   python api_simulator.py
@@ -142,9 +132,8 @@ Examples:
   # Custom interval
   python api_simulator.py --interval 5
   
-  # Use environment variable for API URL
-  export API_GATEWAY_URL="https://your-api-url.com/prod/data"
-  python api_simulator.py
+  # Custom API URL
+  python api_simulator.py --api-url "https://your-api-url.com/prod/data"
   
   # Verbose mode for debugging
   python api_simulator.py --verbose
@@ -173,7 +162,7 @@ Examples:
         '--api-url', 
         type=str, 
         default=DEFAULT_API_URL,
-        help='API Gateway URL (overrides environment variable)'
+        help='API Gateway URL'
     )
     parser.add_argument(
         '--count', 
@@ -195,10 +184,6 @@ Examples:
     
     args = parser.parse_args()
     
-    # Override with environment variable if not set via command line
-    if args.api_url == DEFAULT_API_URL and os.getenv("API_GATEWAY_URL"):
-        args.api_url = os.getenv("API_GATEWAY_URL")
-    
     print("=" * 60)
     print("🌱 Smart Garden - API Sensor Simulator")
     print("=" * 60)
@@ -215,7 +200,7 @@ Examples:
     print("Testing API connection...")
     test_sensor = SmartGardenSensor(args.sensor_id, args.location)
     test_reading = test_sensor.generate_reading()
-    ok, status, _ = send_to_api(test_reading, args.api_url, args.verbose)
+    ok, status, result = send_to_api(test_reading, args.api_url, args.verbose)
     
     if not ok:
         print()

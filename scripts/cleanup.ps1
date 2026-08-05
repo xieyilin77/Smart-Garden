@@ -108,7 +108,7 @@ Write-Host "Emptying S3 buckets..." -ForegroundColor Yellow
 $buckets = @(
     "smart-garden-data-$AccountId",
     "smart-garden-dashboard-$AccountId",
-    "smart-garden-lambda"
+    "smart-garden-lambda-$AccountId"
 )
 
 foreach ($bucket in $buckets) {
