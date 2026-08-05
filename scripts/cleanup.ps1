@@ -20,6 +20,7 @@ Write-Host "  - Lambda functions" -ForegroundColor Gray
 Write-Host "  - API Gateway" -ForegroundColor Gray
 Write-Host "  - IoT Core things and rules" -ForegroundColor Gray
 Write-Host "  - IoT Policies" -ForegroundColor Gray
+Write-Host "  - IoT Certificates (ALL)" -ForegroundColor Gray
 Write-Host "  - CloudWatch Log Groups" -ForegroundColor Gray
 Write-Host ""
 
@@ -42,6 +43,60 @@ try {
 } catch {
     Write-Host "AWS CLI not configured!" -ForegroundColor Red
     exit 1
+}
+Write-Host ""
+
+# ============================================
+# DELETE ALL IOT CERTIFICATES
+# ============================================
+Write-Host "Deleting ALL IoT Certificates..." -ForegroundColor Yellow
+
+$certificatesJson = aws iot list-certificates --region $Region --query "certificates[].certificateId" --output json 2>&1
+
+if ($LASTEXITCODE -eq 0 -and $certificatesJson) {
+    $certificates = $certificatesJson | ConvertFrom-Json
+    
+    if ($certificates) {
+        foreach ($certId in $certificates) {
+            Write-Host "  Processing certificate: $certId" -ForegroundColor Gray
+            
+            $certArn = aws iot list-certificates --region $Region --query "certificates[?certificateId=='$certId'].certificateArn" --output text
+            
+            $policiesJson = aws iot list-attached-policies --target $certArn --region $Region --query "policies[].policyName" --output json 2>$null
+            if ($policiesJson) {
+                $policies = $policiesJson | ConvertFrom-Json
+                foreach ($policy in $policies) {
+                    Write-Host "    Detaching policy: $policy" -ForegroundColor Gray
+                    aws iot detach-policy --policy-name $policy --target $certArn --region $Region 2>&1 | Out-Null
+                }
+            }
+            
+            $thingsJson = aws iot list-thing-principals --principal $certArn --region $Region --query "things" --output json 2>$null
+            if ($thingsJson) {
+                $things = $thingsJson | ConvertFrom-Json
+                foreach ($thing in $things) {
+                    Write-Host "    Detaching from thing: $thing" -ForegroundColor Gray
+                    aws iot detach-thing-principal --thing-name $thing --principal $certArn --region $Region 2>&1 | Out-Null
+                }
+            }
+            
+            Write-Host "    Deactivating certificate..." -ForegroundColor Gray
+            aws iot update-certificate --certificate-id $certId --new-status INACTIVE --region $Region 2>&1 | Out-Null
+            
+            Write-Host "    Deleting certificate..." -ForegroundColor Gray
+            aws iot delete-certificate --certificate-id $certId --region $Region 2>&1 | Out-Null
+            
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host "  Deleted certificate: $certId" -ForegroundColor Green
+            } else {
+                Write-Host "  Could not delete certificate: $certId" -ForegroundColor Red
+            }
+        }
+    } else {
+        Write-Host "  No certificates found" -ForegroundColor Gray
+    }
+} else {
+    Write-Host "  No certificates found" -ForegroundColor Gray
 }
 Write-Host ""
 
@@ -72,17 +127,23 @@ Write-Host ""
 # ============================================
 Write-Host "Deleting CloudWatch Log Groups..." -ForegroundColor Yellow
 
-$logGroups = aws logs describe-log-groups --region $Region --query "logGroups[?starts_with(logGroupName, '/aws/lambda/smart-garden')].logGroupName" --output text 2>&1
+$logGroupsJson = aws logs describe-log-groups --region $Region --query "logGroups[?starts_with(logGroupName, '/aws/lambda/smart-garden')].logGroupName" --output json 2>&1
 
-if ($LASTEXITCODE -eq 0 -and $logGroups) {
-    foreach ($logGroup in $logGroups) {
-        Write-Host "  Deleting log group: $logGroup" -ForegroundColor Gray
-        aws logs delete-log-group --log-group-name $logGroup --region $Region 2>&1 | Out-Null
-        if ($LASTEXITCODE -eq 0) {
-            Write-Host "    Deleted" -ForegroundColor Green
-        } else {
-            Write-Host "    Could not delete" -ForegroundColor Yellow
+if ($LASTEXITCODE -eq 0 -and $logGroupsJson) {
+    $logGroups = $logGroupsJson | ConvertFrom-Json
+    
+    if ($logGroups) {
+        foreach ($logGroup in $logGroups) {
+            Write-Host "  Deleting log group: $logGroup" -ForegroundColor Gray
+            aws logs delete-log-group --log-group-name $logGroup --region $Region 2>&1 | Out-Null
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host "    Deleted" -ForegroundColor Green
+            } else {
+                Write-Host "    Could not delete" -ForegroundColor Red
+            }
         }
+    } else {
+        Write-Host "  No CloudWatch Log Groups found" -ForegroundColor Gray
     }
 } else {
     Write-Host "  No CloudWatch Log Groups found" -ForegroundColor Gray
@@ -94,97 +155,102 @@ Write-Host ""
 # ============================================
 Write-Host "Deleting IoT Policies..." -ForegroundColor Yellow
 
-$policyName = "$StackName-iot-policy"
-Write-Host "  Checking for IoT policy: $policyName" -ForegroundColor Gray
+$policyNamesJson = aws iot list-policies --region $Region --query "policies[?starts_with(policyName, 'smart-garden')].policyName" --output json 2>&1
 
-# Check if policy exists
-$policyExists = aws iot get-policy --policy-name $policyName --region $Region 2>&1
-if ($LASTEXITCODE -eq 0) {
-    Write-Host "  Deleting IoT policy: $policyName" -ForegroundColor Gray
+if ($LASTEXITCODE -eq 0 -and $policyNamesJson) {
+    $policyNames = $policyNamesJson | ConvertFrom-Json
     
-    # First, detach the policy from all principals
-    $principals = aws iot list-principals --policy-name $policyName --region $Region --query "principals" --output text 2>&1
-    if ($LASTEXITCODE -eq 0 -and $principals) {
-        foreach ($principal in $principals) {
-            Write-Host "    Detaching policy from: $principal" -ForegroundColor Gray
-            aws iot detach-policy --policy-name $policyName --target $principal --region $Region 2>&1 | Out-Null
+    if ($policyNames) {
+        foreach ($policyName in $policyNames) {
+            Write-Host "  Deleting IoT policy: $policyName" -ForegroundColor Gray
+            
+            $principalsJson = aws iot list-principals --policy-name $policyName --region $Region --query "principals" --output json 2>&1
+            if ($principalsJson) {
+                $principals = $principalsJson | ConvertFrom-Json
+                foreach ($principal in $principals) {
+                    Write-Host "    Detaching policy from: $principal" -ForegroundColor Gray
+                    aws iot detach-policy --policy-name $policyName --target $principal --region $Region 2>&1 | Out-Null
+                }
+            }
+            
+            aws iot delete-policy --policy-name $policyName --region $Region 2>&1 | Out-Null
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host "  Deleted IoT policy: $policyName" -ForegroundColor Green
+            } else {
+                Write-Host "  Could not delete IoT policy: $policyName" -ForegroundColor Red
+            }
         }
-    }
-    
-    # Delete the policy
-    aws iot delete-policy --policy-name $policyName --region $Region 2>&1 | Out-Null
-    if ($LASTEXITCODE -eq 0) {
-        Write-Host "  Deleted IoT policy: $policyName" -ForegroundColor Green
     } else {
-        Write-Host "  Could not delete IoT policy (may have attachments)" -ForegroundColor Yellow
+        Write-Host "  No IoT policies found" -ForegroundColor Gray
     }
 } else {
-    Write-Host "  No IoT policy found" -ForegroundColor Gray
+    Write-Host "  No IoT policies found" -ForegroundColor Gray
 }
 Write-Host ""
 
 # ============================================
-# DELETE IOT THINGS & CERTIFICATES
+# DELETE IOT THINGS
 # ============================================
-Write-Host "Deleting IoT Things and Certificates..." -ForegroundColor Yellow
+Write-Host "Deleting IoT Things..." -ForegroundColor Yellow
 
-$thingName = "$StackName-sensor"
-Write-Host "  Checking for IoT thing: $thingName" -ForegroundColor Gray
+$thingNamesJson = aws iot list-things --region $Region --query "things[?starts_with(thingName, 'smart-garden')].thingName" --output json 2>&1
 
-# Get thing details
-$thingDetails = aws iot describe-thing --thing-name $thingName --region $Region 2>&1
-if ($LASTEXITCODE -eq 0) {
-    # Get principal (certificate) attached to thing
-    $principals = aws iot list-thing-principals --thing-name $thingName --region $Region --query "principals" --output text 2>&1
+if ($LASTEXITCODE -eq 0 -and $thingNamesJson) {
+    $thingNames = $thingNamesJson | ConvertFrom-Json
     
-    if ($LASTEXITCODE -eq 0 -and $principals) {
-        foreach ($principal in $principals) {
-            Write-Host "  Detaching certificate: $principal" -ForegroundColor Gray
-            aws iot detach-thing-principal --thing-name $thingName --principal $principal --region $Region 2>&1 | Out-Null
+    if ($thingNames) {
+        foreach ($thingName in $thingNames) {
+            Write-Host "  Deleting IoT thing: $thingName" -ForegroundColor Gray
             
-            # Extract certificate ID from ARN
-            $certId = $principal -replace ".*/([^/]+)$", '$1'
-            Write-Host "  Deleting certificate: $certId" -ForegroundColor Gray
+            $principalsJson = aws iot list-thing-principals --thing-name $thingName --region $Region --query "principals" --output json 2>&1
+            if ($principalsJson) {
+                $principals = $principalsJson | ConvertFrom-Json
+                foreach ($principal in $principals) {
+                    Write-Host "    Detaching certificate: $principal" -ForegroundColor Gray
+                    aws iot detach-thing-principal --thing-name $thingName --principal $principal --region $Region 2>&1 | Out-Null
+                }
+            }
             
-            # Deactivate certificate first
-            aws iot update-certificate --certificate-id $certId --new-status INACTIVE --region $Region 2>&1 | Out-Null
-            
-            # Delete certificate
-            aws iot delete-certificate --certificate-id $certId --region $Region 2>&1 | Out-Null
-            Write-Host "  Deleted certificate" -ForegroundColor Green
+            aws iot delete-thing --thing-name $thingName --region $Region 2>&1 | Out-Null
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host "  Deleted IoT thing: $thingName" -ForegroundColor Green
+            } else {
+                Write-Host "  Could not delete IoT thing: $thingName" -ForegroundColor Red
+            }
         }
-    }
-    
-    # Delete the thing
-    Write-Host "  Deleting IoT thing: $thingName" -ForegroundColor Gray
-    aws iot delete-thing --thing-name $thingName --region $Region 2>&1 | Out-Null
-    if ($LASTEXITCODE -eq 0) {
-        Write-Host "  Deleted IoT thing" -ForegroundColor Green
     } else {
-        Write-Host "  Could not delete IoT thing" -ForegroundColor Yellow
+        Write-Host "  No IoT things found" -ForegroundColor Gray
     }
 } else {
-    Write-Host "  No IoT thing found" -ForegroundColor Gray
+    Write-Host "  No IoT things found" -ForegroundColor Gray
 }
 Write-Host ""
 
 # ============================================
-# DELETE IOT TOPIC RULE
+# DELETE IOT TOPIC RULES
 # ============================================
-Write-Host "Deleting IoT Topic Rule..." -ForegroundColor Yellow
+Write-Host "Deleting IoT Topic Rules..." -ForegroundColor Yellow
 
-$ruleName = "smart_garden_rule"
-$ruleExists = aws iot get-topic-rule --rule-name $ruleName --region $Region 2>&1
-if ($LASTEXITCODE -eq 0) {
-    Write-Host "  Deleting IoT topic rule: $ruleName" -ForegroundColor Gray
-    aws iot delete-topic-rule --rule-name $ruleName --region $Region 2>&1 | Out-Null
-    if ($LASTEXITCODE -eq 0) {
-        Write-Host "  Deleted IoT topic rule" -ForegroundColor Green
+$ruleNamesJson = aws iot list-topic-rules --region $Region --query "rules[?starts_with(ruleName, 'smart_garden')].ruleName" --output json 2>&1
+
+if ($LASTEXITCODE -eq 0 -and $ruleNamesJson) {
+    $ruleNames = $ruleNamesJson | ConvertFrom-Json
+    
+    if ($ruleNames) {
+        foreach ($ruleName in $ruleNames) {
+            Write-Host "  Deleting IoT topic rule: $ruleName" -ForegroundColor Gray
+            aws iot delete-topic-rule --rule-name $ruleName --region $Region 2>&1 | Out-Null
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host "  Deleted IoT topic rule: $ruleName" -ForegroundColor Green
+            } else {
+                Write-Host "  Could not delete IoT topic rule: $ruleName" -ForegroundColor Red
+            }
+        }
     } else {
-        Write-Host "  Could not delete IoT topic rule" -ForegroundColor Yellow
+        Write-Host "  No IoT topic rules found" -ForegroundColor Gray
     }
 } else {
-    Write-Host "  No IoT topic rule found" -ForegroundColor Gray
+    Write-Host "  No IoT topic rules found" -ForegroundColor Gray
 }
 Write-Host ""
 
@@ -201,7 +267,7 @@ if ($LASTEXITCODE -eq 0) {
     if ($LASTEXITCODE -eq 0) {
         Write-Host "  Deleted IoT authorizer" -ForegroundColor Green
     } else {
-        Write-Host "  Could not delete IoT authorizer" -ForegroundColor Yellow
+        Write-Host "  Could not delete IoT authorizer" -ForegroundColor Red
     }
 } else {
     Write-Host "  No IoT authorizer found" -ForegroundColor Gray
@@ -269,12 +335,13 @@ Write-Host "CLEANUP COMPLETE" -ForegroundColor Green
 Write-Host "=====================================" -ForegroundColor Green
 Write-Host ""
 Write-Host "The following resources have been deleted:" -ForegroundColor White
+Write-Host "  - IoT Certificates (ALL)" -ForegroundColor Gray
+Write-Host "  - IoT Policies" -ForegroundColor Gray
+Write-Host "  - IoT Things" -ForegroundColor Gray
+Write-Host "  - IoT Topic Rules" -ForegroundColor Gray
 Write-Host "  - CloudFormation stack: $StackName" -ForegroundColor Gray
 Write-Host "  - S3 buckets (emptied and deleted)" -ForegroundColor Gray
 Write-Host "  - CloudWatch Log Groups" -ForegroundColor Gray
-Write-Host "  - IoT Policies" -ForegroundColor Gray
-Write-Host "  - IoT Things and Certificates" -ForegroundColor Gray
-Write-Host "  - IoT Topic Rules" -ForegroundColor Gray
 Write-Host "  - Associated resources (Lambda, DynamoDB, API Gateway, IoT)" -ForegroundColor Gray
 Write-Host ""
 Write-Host "Note: Some resources may take a few minutes to fully delete." -ForegroundColor Yellow

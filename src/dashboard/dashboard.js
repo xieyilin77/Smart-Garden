@@ -7,7 +7,8 @@
 // ============================================
 
 // API Gateway URL will be injected during deployment. If not set, mock data will be used.
-const API_URL = '{{API_GATEWAY_URL}}';
+// const API_URL = '{{API_GATEWAY_URL}}';
+const API_URL = 'https://zl7f7b7yh3.execute-api.us-west-2.amazonaws.com/prod/data';
 
 // Mock Mode - Set to true for offline development, false for AWS deployment
 // Using window object for global access
