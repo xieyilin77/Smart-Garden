@@ -2,7 +2,7 @@ AWSTemplateFormatVersion: '2010-09-09'
 Description: 'Smart Garden Manager - Serverless IoT Platform (Free Tier Optimized with SNS & CloudFront)'
 
 # ============================================
-# PARAMETER
+# PARAMETERS
 # ============================================
 Parameters:
   EnvironmentName:
@@ -162,6 +162,16 @@ Resources:
             Resource: !Sub '${WebsiteBucket.Arn}/*'
 
   # ============================================
+  # CLOUDFRONT ORIGIN ACCESS IDENTITY (NEW - IMPROVED SECURITY)
+  # ============================================
+  CloudFrontOriginAccessIdentity:
+    Type: AWS::CloudFront::CloudFrontOriginAccessIdentity
+    Condition: EnableCloudFront
+    Properties:
+      CloudFrontOriginAccessIdentityConfig:
+        Comment: !Sub 'OAI for ${EnvironmentName} website bucket'
+
+  # ============================================
   # S3 BUCKET POLICIES
   # ============================================
   DataBucketPolicy:
@@ -246,7 +256,7 @@ Resources:
                   - iot:Receive
                 Resource: '*'
               
-              # CloudWatch für Custom Metrics
+              # CloudWatch for Custom Metrics
               - Effect: Allow
                 Action:
                   - cloudwatch:PutMetricData
@@ -408,6 +418,8 @@ Resources:
           DATA_BUCKET: !Ref DataBucket
           SNS_TOPIC_ARN: !Ref AlertTopic
           LOG_LEVEL: INFO
+          BATCH_SIZE: '100'
+          BATCH_INTERVAL: '300'
       Timeout: !Ref LambdaTimeout
       MemorySize: !Ref LambdaMemorySize
       TracingConfig:
@@ -429,6 +441,7 @@ Resources:
           HISTORY_TABLE: !Ref SensorDataTable
           DEBUG: 'false'
           LOG_LEVEL: INFO
+          CACHE_TTL: '300'
       Timeout: !Ref LambdaTimeout
       MemorySize: !Ref LambdaMemorySize
       TracingConfig:
@@ -446,7 +459,7 @@ Resources:
       SourceArn: !Sub 'arn:aws:iot:${AWS::Region}:${AWS::AccountId}:rule/smart_garden_rule'
 
   # ============================================
-  # SNS - MIT EMAIL (Kostenlos im Free Tier!)
+  # SNS - WITH EMAIL (Free Tier Compatible)
   # ============================================
   AlertTopic:
     Type: AWS::SNS::Topic
@@ -561,7 +574,7 @@ Resources:
       SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${SensorAPI}/*/POST/data'
 
   # ============================================
-  # CLOUDFRONT 
+  # CLOUDFRONT DISTRIBUTION (IMPROVED WITH OAI)
   # ============================================
   CloudFrontDistribution:
     Type: AWS::CloudFront::Distribution
@@ -575,7 +588,7 @@ Resources:
           - Id: S3Origin
             DomainName: !GetAtt WebsiteBucket.RegionalDomainName
             S3OriginConfig:
-              OriginAccessIdentity: ''
+              OriginAccessIdentity: !Sub 'origin-access-identity/cloudfront/${CloudFrontOriginAccessIdentity}'
         DefaultCacheBehavior:
           TargetOriginId: S3Origin
           ViewerProtocolPolicy: redirect-to-https
@@ -651,7 +664,7 @@ Resources:
           CloudFrontDefaultCertificate: true
 
   # ============================================
-  # CLOUDWATCH ALARME (OPTIONAL - FREE TIER)
+  # CLOUDWATCH ALARMS (OPTIONAL - FREE TIER)
   # ============================================
   LambdaErrorAlarm:
     Type: AWS::CloudWatch::Alarm

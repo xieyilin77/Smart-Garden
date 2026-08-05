@@ -7,7 +7,7 @@ Simulates environmental sensor data and sends it to AWS IoT Core.
 Features:
     - Generates realistic temperature, humidity, and soil moisture data
     - Simulates time-of-day effects
-    - Random weather events (rain, heat wave)
+    - Random weather events (rain, heat wave) - IMPROVED
     - Configurable sending interval
     - MQTT communication with AWS IoT Core
     - Environment variable support for configuration
@@ -54,7 +54,7 @@ except ImportError:
 # Load from environment variables with fallbacks
 ENDPOINT = os.getenv("AWS_IOT_ENDPOINT", "YOUR_IOT_ENDPOINT.iot.region.amazonaws.com")
 TOPIC = os.getenv("AWS_IOT_TOPIC", "sensor/data")
-INTERVAL = int(os.getenv("SENSOR_INTERVAL", "60"))
+INTERVAL = int(os.getenv("SENSOR_INTERVAL", "5"))
 SENSOR_ID = os.getenv("SENSOR_ID", "sensor-001")
 LOCATION = os.getenv("SENSOR_LOCATION", "indoor")
 
@@ -172,7 +172,7 @@ class SmartGardenSensor:
         # Stats tracking
         self.stats = {
             'total_readings': 0,
-            'events': {'rain': 0, 'heatwave': 0}
+            'events': {'rain': 0, 'heatwave': 0, 'drought': 0}
         }
         
         logger.info(f"Sensor initialized: {sensor_id}")
@@ -191,37 +191,64 @@ class SmartGardenSensor:
             return (hour - 6) / 12  # 0.0 to 1.0
         return 0
     
-    def _apply_weather_events(self, temperature, moisture):
-        """Apply random weather events"""
-        # Rain event (1% chance)
-        if random.random() < 0.01:
-            rain_amount = random.uniform(10, 20)
+    def _apply_weather_events(self, temperature, humidity, moisture):
+        """
+        Apply random weather events - IMPROVED VERSION
+        
+        Args:
+            temperature: Current temperature
+            humidity: Current humidity
+            moisture: Current soil moisture
+        
+        Returns:
+            tuple: (temperature, humidity, moisture)
+        """
+        # Rain event (probability based on humidity)
+        rain_chance = 0.01 + (humidity - 50) * 0.0005
+        rain_chance = max(0.005, min(0.05, rain_chance))
+        
+        if random.random() < rain_chance:
+            rain_amount = random.uniform(5, 25)
             moisture += rain_amount
+            humidity += random.uniform(2, 8)
             self.stats['events']['rain'] += 1
-            logger.info(f"Rain event simulated: +{rain_amount:.1f}% moisture")
+            logger.info(f"🌧️ Rain event: +{rain_amount:.1f}% moisture")
         
-        # Heat wave event (0.5% chance)
-        if random.random() < 0.005:
-            heat_amount = random.uniform(3, 5)
+        # Heat wave event (low humidity triggers this)
+        if random.random() < 0.005 and humidity < 60:
+            heat_amount = random.uniform(3, 7)
             temperature += heat_amount
+            humidity -= random.uniform(2, 5)
             self.stats['events']['heatwave'] += 1
-            logger.info(f"Heat wave simulated: +{heat_amount:.1f}C")
+            logger.info(f"☀️ Heat wave: +{heat_amount:.1f}°C")
         
-        return temperature, moisture
+        # Drought event (long dry period simulation)
+        if random.random() < 0.002 and moisture < 40:
+            drought_amount = random.uniform(3, 8)
+            moisture -= drought_amount
+            humidity -= random.uniform(1, 3)
+            self.stats['events']['drought'] += 1
+            logger.info(f"🏜️ Drought event: -{drought_amount:.1f}% moisture")
+        
+        return temperature, humidity, moisture
     
     def _update_trends(self):
-        """Update soil moisture trend"""
+        """Update soil moisture and temperature trends"""
         # Simulate watering cycle every 100 readings
         if self.reading_count > 0 and self.reading_count % 100 == 0:
             watering = random.uniform(5, 15)
             self.moisture_trend += watering
-            logger.debug(f"Watering cycle: +{watering:.1f}% moisture")
+            logger.debug(f"💧 Watering cycle: +{watering:.1f}% moisture")
         
         # Natural decrease
         decrease = random.uniform(0.1, 0.5)
         self.moisture_trend -= decrease
         
-        # Clamp trend
+        # Temperature drift (slow changes)
+        self.temperature_trend += random.uniform(-0.05, 0.05)
+        self.temperature_trend = max(-2, min(2, self.temperature_trend))
+        
+        # Clamp moisture trend
         self.moisture_trend = max(-20, min(20, self.moisture_trend))
     
     def generate_reading(self):
@@ -243,6 +270,7 @@ class SmartGardenSensor:
         # Calculate temperature
         temperature = (self.base_temp + 
                       time_factor * 5.0 + 
+                      self.temperature_trend +
                       noise * 2.0 +
                       random.gauss(0, 0.3))
         temperature = max(15, min(40, temperature))
@@ -262,7 +290,9 @@ class SmartGardenSensor:
                    random.gauss(0, 2.0))
         
         # Apply weather events
-        temperature, moisture = self._apply_weather_events(temperature, moisture)
+        temperature, humidity, moisture = self._apply_weather_events(
+            temperature, humidity, moisture
+        )
         
         # Clamp values
         moisture = max(10, min(90, moisture))

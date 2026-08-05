@@ -4,7 +4,7 @@ import json
 import os
 import logging
 import base64
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone 
 from decimal import Decimal
 from typing import Dict, List, Any, Optional, Tuple
 import boto3
@@ -18,6 +18,14 @@ logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 # ============================================
+# HELPER: UTC TIMESTAMP
+# ============================================
+
+def get_utc_timestamp() -> str:
+    """Get current UTC timestamp in ISO format with Z suffix"""
+    return datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+
+# ============================================
 # OFFLINE TEST MODE - Setup environment
 # ============================================
 
@@ -29,6 +37,7 @@ if not is_running_in_aws():
     # Running locally - set environment variables for testing
     os.environ['LATEST_TABLE'] = 'smart-garden-sensor-latest'
     os.environ['HISTORY_TABLE'] = 'smart-garden-sensor-data'
+    os.environ['CACHE_TTL'] = '300'
     logger.info("OFFLINE MODE: Environment variables set")
 
 # ============================================
@@ -58,15 +67,16 @@ class MockTable:
                 'temperature': base_temp[i],
                 'humidity': base_hum[i],
                 'soil_moisture': base_moist[i],
-                'timestamp': datetime.utcnow().isoformat() + 'Z',
-                'last_updated': datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
+                'timestamp': get_utc_timestamp(), 
+                'last_updated': get_utc_timestamp()  
             }
         
         # Historical data (last 24 hours)
-        base_time = datetime.utcnow()
+        base_time = datetime.now(timezone.utc)
         for sensor in sensors:
-            for i in range(50):
-                dt = base_time - timedelta(minutes=i * 5)
+            for i in range(50):  # i=0 ist die neueste Messung
+                dt = base_time - timedelta(minutes=i * 5)  # i=0 → jetzt, i=49 → vor 245 min
+                
                 # Simulate realistic variations
                 temp = 20 + (i % 10) + (i % 3) * 0.5
                 hum = 55 + (i % 15) + (i % 2) * 2
@@ -81,6 +91,11 @@ class MockTable:
                     'record_id': f'record-{i:04d}'
                 })
     
+        self.history_data.sort(
+            key=lambda x: x.get('timestamp', ''),
+            reverse=True  # Neueste zuerst
+        )
+
     def get_item(self, Key: Dict) -> Dict:
         """Mock get_item operation"""
         key = Key.get('sensor_id', '')
@@ -364,6 +379,18 @@ def is_debug_enabled() -> bool:
     """
     return os.environ.get('DEBUG', 'false').lower() in ['true', '1', 'yes']
 
+def get_cache_ttl() -> int:
+    """
+    Get cache TTL from environment
+    
+    Returns:
+        int: Cache TTL in seconds
+    """
+    try:
+        return int(os.environ.get('CACHE_TTL', '300'))
+    except ValueError:
+        return 300
+
 # ============================================
 # MAIN LAMBDA HANDLER
 # ============================================
@@ -451,7 +478,7 @@ def lambda_handler(event: Dict, context: Any) -> Dict:
         try:
             # Calculate cutoff time
             cutoff_time = (
-                datetime.utcnow() - timedelta(hours=hours)
+                datetime.now(timezone.utc) - timedelta(hours=hours) 
             ).isoformat() + 'Z'
             
             # Build query parameters
@@ -464,7 +491,7 @@ def lambda_handler(event: Dict, context: Any) -> Dict:
                     ':sid': sensor_id,
                     ':cutoff': cutoff_time
                 },
-                'ScanIndexForward': False,  # Newest first
+                'ScanIndexForward': false,  # Newest first
                 'Limit': limit
             }
             
@@ -505,7 +532,7 @@ def lambda_handler(event: Dict, context: Any) -> Dict:
             'count': len(history),
             'sensor_id': sensor_id,
             'time_range': f'Last {hours} hours',
-            'query_timestamp': datetime.utcnow().isoformat() + 'Z',
+            'query_timestamp': get_utc_timestamp(), 
             'pagination': {
                 'limit': limit,
                 'has_more': next_token_next is not None,
@@ -514,14 +541,16 @@ def lambda_handler(event: Dict, context: Any) -> Dict:
             'metadata': {
                 'api_version': '2.1',
                 'source': 'lambda-query-data',
-                'debug_mode': is_debug_enabled()
+                'debug_mode': is_debug_enabled(),
+                'cache_ttl': get_cache_ttl()
             }
         }
         
         # ============================================
         # 5. PREPARE RESPONSE WITH CACHING HEADERS
         # ============================================
-        cache_control = 'max-age=60, s-maxage=300, stale-while-revalidate=60'
+        cache_ttl = get_cache_ttl()
+        cache_control = f'public, max-age={cache_ttl}, s-maxage={cache_ttl * 2}, stale-while-revalidate={cache_ttl}'
         
         return {
             'statusCode': 200,
@@ -533,7 +562,8 @@ def lambda_handler(event: Dict, context: Any) -> Dict:
                     'Content-Type, X-Amz-Date, Authorization, '
                     'X-Api-Key, X-Amz-Security-Token'
                 ),
-                'Cache-Control': cache_control
+                'Cache-Control': cache_control,
+                'Vary': 'Accept-Encoding'
             },
             'body': json.dumps(response_body, cls=DecimalEncoder)
         }

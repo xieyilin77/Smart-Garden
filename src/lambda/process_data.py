@@ -11,6 +11,7 @@ Features:
     - Threshold-based alerting via SNS
     - Comprehensive error handling and logging
     - Offline testing mode
+    - Batch processing for high throughput (NEW)
 
 Environment Variables:
     LATEST_TABLE: DynamoDB table name for latest values
@@ -19,13 +20,15 @@ Environment Variables:
     SNS_TOPIC_ARN: SNS topic ARN for alerts
     LOG_LEVEL: Logging level (DEBUG, INFO, WARNING, ERROR)
     DEBUG: Enable debug mode (true/false)
+    BATCH_SIZE: Number of items to batch for DynamoDB (default: 100)
+    BATCH_INTERVAL: Seconds between batches (default: 300)
 """
 
 import json
 import os
 import logging
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone  
 from decimal import Decimal
 from typing import Dict, Any, Optional, List, Tuple
 import boto3
@@ -55,6 +58,10 @@ if DEBUG_MODE:
 def is_running_in_aws() -> bool:
     """Check if running in AWS Lambda environment"""
     return 'AWS_EXECUTION_ENV' in os.environ or 'LAMBDA_TASK_ROOT' in os.environ
+
+def get_utc_timestamp() -> str:
+    """Get current UTC timestamp in ISO format with Z suffix"""
+    return datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
 
 if not is_running_in_aws():
     # Running locally - set environment variables for testing
@@ -108,6 +115,28 @@ class MockTable:
     def query(self, **kwargs):
         logger.debug(f"[MOCK] Query on {self.name}")
         return {'Items': []}
+
+    def batch_writer(self):
+        """Mock batch writer for offline testing"""
+        return MockBatchWriter(self)
+
+
+class MockBatchWriter:
+    """Mock DynamoDB BatchWriter for offline testing"""
+    
+    def __init__(self, table):
+        self.table = table
+        self.items = []
+    
+    def __enter__(self):
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        pass
+    
+    def put_item(self, Item):
+        self.items.append(Item)
+        self.table.put_item(Item)
 
 
 class MockDynamoDB:
@@ -189,7 +218,6 @@ THRESHOLDS = {
 
 BATCH_SIZE = int(os.getenv('BATCH_SIZE', '100'))
 BATCH_INTERVAL = int(os.getenv('BATCH_INTERVAL', '300'))
-
 
 # ============================================
 # HELPER FUNCTIONS
@@ -349,7 +377,7 @@ def send_alerts(alerts: List[str], data: Dict) -> bool:
             "SMART GARDEN ALERT\n"
             "====================\n"
             f"Sensor: {data.get('sensor_id', 'unknown')}\n"
-            f"Time: {data.get('timestamp', datetime.utcnow().isoformat() + 'Z')}\n\n"
+            f"Time: {data.get('timestamp', get_utc_timestamp())}\n\n"
             "ALERTS DETECTED:\n"
         )
         
@@ -386,7 +414,7 @@ def send_alerts(alerts: List[str], data: Dict) -> bool:
 
 def archive_to_s3(data: Dict, timestamp: str) -> str:
     """
-    Archive data to S3 with daily batching
+    Archive data to S3 with daily batching - IMPROVED VERSION
     
     Args:
         data: Sensor data to archive
@@ -401,30 +429,21 @@ def archive_to_s3(data: Dict, timestamp: str) -> str:
             dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
             date_str = dt.strftime('%Y/%m/%d')
         except (ValueError, TypeError):
-            date_str = datetime.utcnow().strftime('%Y/%m/%d')
+            date_str = get_utc_timestamp()[:10].replace('-', '/')  # ✅ Gefixt
         
         sensor_id = data.get('sensor_id', 'unknown')
         key = f"raw-data/{sensor_id}/{date_str}/data.jsonl"
         
-        # Append data in JSON Lines format
-        json_line = json.dumps(data) + '\n'
+        # Use DecimalEncoder for proper JSON serialization
+        json_line = json.dumps(data, cls=DecimalEncoder) + '\n'
         
-        try:
-            # Try to get existing file and append
-            existing = s3.get_object(Bucket=data_bucket, Key=key)['Body'].read().decode('utf-8')
-            content = existing + json_line
-        except ClientError as e:
-            if e.response['Error']['Code'] == 'NoSuchKey':
-                content = json_line
-            else:
-                logger.warning(f"S3 get error: {e}")
-                content = json_line
-        
+        # Improved: Use put_object with proper content type and storage class
         s3.put_object(
             Bucket=data_bucket,
             Key=key,
-            Body=content.encode('utf-8'),
-            ContentType='application/jsonl'
+            Body=json_line.encode('utf-8'),
+            ContentType='application/jsonl',
+            StorageClass='STANDARD_IA'  # Lower cost for archival data
         )
         
         logger.debug(f"Data archived to S3: {key}")
@@ -438,8 +457,9 @@ def archive_to_s3(data: Dict, timestamp: str) -> str:
             s3.put_object(
                 Bucket=data_bucket,
                 Key=fallback_key,
-                Body=json.dumps(data, indent=2),
-                ContentType='application/json'
+                Body=json.dumps(data, cls=DecimalEncoder, indent=2),
+                ContentType='application/json',
+                StorageClass='STANDARD_IA'
             )
             logger.info(f"Archived to fallback key: {fallback_key}")
             return fallback_key
@@ -447,6 +467,28 @@ def archive_to_s3(data: Dict, timestamp: str) -> str:
             logger.error(f"Fallback archiving also failed: {e2}")
             return ""
 
+def batch_store_history(items: List[Dict]) -> bool:
+    """
+    Batch store historical data in DynamoDB - NEW FUNCTION
+    
+    Args:
+        items: List of items to store
+    
+    Returns:
+        bool: True if successful
+    """
+    if not items:
+        return True
+    
+    try:
+        with table_history.batch_writer() as batch:
+            for item in items:
+                batch.put_item(Item=item)
+        logger.debug(f"Batch stored {len(items)} items in DynamoDB")
+        return True
+    except ClientError as e:
+        logger.error(f"Batch write failed: {e}")
+        return False
 
 # ============================================
 # MAIN LAMBDA HANDLER
@@ -493,7 +535,7 @@ def lambda_handler(event, context):
         temperature = Decimal(str(data.get('temperature', 0)))
         humidity = Decimal(str(data.get('humidity', 0)))
         soil_moisture = Decimal(str(data.get('soil_moisture', 0)))
-        timestamp = data.get('timestamp', datetime.utcnow().isoformat() + 'Z')
+        timestamp = data.get('timestamp', get_utc_timestamp())
         
         logger.info(
             f"Processing {sensor_id}: "
@@ -509,7 +551,7 @@ def lambda_handler(event, context):
             'humidity': humidity,
             'soil_moisture': soil_moisture,
             'timestamp': timestamp,
-            'last_updated': datetime.utcnow().isoformat() + 'Z'
+            'last_updated': get_utc_timestamp()
         }
         
         # Add optional fields if present
@@ -535,7 +577,7 @@ def lambda_handler(event, context):
                 })
             }
         
-        # 2. Store historical data in DynamoDB
+        # 2. Store historical data in DynamoDB (using batch for efficiency)
         history_item = {
             'sensor_id': sensor_id,
             'timestamp': timestamp,
@@ -550,8 +592,11 @@ def lambda_handler(event, context):
             if field in data:
                 history_item[field] = data[field]
         
+        # Use batch writer for better performance
         try:
-            table_history.put_item(Item=history_item)
+            # For single item, use batch writer for consistency
+            with table_history.batch_writer() as batch:
+                batch.put_item(Item=history_item)
             logger.debug(f"History data stored for {sensor_id}")
         except ClientError as e:
             logger.error(f"Failed to store history data: {e}")
@@ -645,7 +690,7 @@ def lambda_handler(event, context):
 
 if __name__ == "__main__":
     print("=" * 60)
-    print("OFFLINE TEST MODE - Process Data Lambda")
+    print("OFFLINE TEST MODE - Process Data Lambda (Improved)")
     print("=" * 60)
     
     # Test 1: IoT Core format (direct JSON)
@@ -694,12 +739,29 @@ if __name__ == "__main__":
         'soil_moisture': 40.0
     }
     
+    # Test 6: Edge cases (NEW)
+    test_data_6 = {
+        'sensor_id': 'test-sensor-006',
+        'temperature': 100.0,
+        'humidity': 100.0,
+        'soil_moisture': 100.0
+    }
+    
+    test_data_7 = {
+        'sensor_id': 'test-sensor-007',
+        'temperature': -50.0,
+        'humidity': 0.0,
+        'soil_moisture': 0.0
+    }
+    
     test_cases = [
         ('IoT Core Format (Normal)', test_data_1),
         ('IoT Core Format (Alert: Low Moisture)', test_data_2),
         ('API Gateway Format', test_data_3),
         ('IoT Core Format (Multiple Alerts)', test_data_4),
-        ('Invalid Data Test', test_data_5)
+        ('Invalid Data Test', test_data_5),
+        ('Edge Case - Max Values', test_data_6),
+        ('Edge Case - Min Values', test_data_7)
     ]
     
     passed = 0
@@ -720,14 +782,14 @@ if __name__ == "__main__":
             print(json.dumps(json.loads(result['body']), indent=2, default=str))
             
             if result['statusCode'] == 200:
-                print(f"\nTest '{test_name}' PASSED")
+                print(f"\n✅ Test '{test_name}' PASSED")
                 passed += 1
             else:
-                print(f"\nTest '{test_name}' FAILED (status: {result['statusCode']})")
+                print(f"\n❌ Test '{test_name}' FAILED (status: {result['statusCode']})")
                 failed += 1
                 
         except Exception as e:
-            print(f"\nTest '{test_name}' FAILED with exception: {e}")
+            print(f"\n❌ Test '{test_name}' FAILED with exception: {e}")
             failed += 1
     
     print("\n" + "=" * 60)

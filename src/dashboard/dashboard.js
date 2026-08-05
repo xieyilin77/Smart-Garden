@@ -3,42 +3,48 @@
 // ============================================
 
 // ============================================
-// CONFIGURATION (from environment or inline)
+// CONFIGURATION
 // ============================================
 
-// API Gateway URL will be injected during deployment. If not set, mock data will be used.
-// const API_URL = '{{API_GATEWAY_URL}}';
-const API_URL = 'https://zl7f7b7yh3.execute-api.us-west-2.amazonaws.com/prod/data';
 
-// Mock Mode - Set to true for offline development, false for AWS deployment
-// Using window object for global access
-window.USE_MOCK_DATA = false;  // Change to false for AWS deployment
+window.USE_MOCK_DATA = false;
 
-// Fallback for offline development
-if (API_URL === '{{API_GATEWAY_URL}}') {
-    console.warn('⚠️ API_URL not configured! Using mock data.');
-    window.USE_MOCK_DATA = true;
-}
+// 🔥 OFFLINE DASHBOARD TEST with MOCK API
+//const API_URL = 'http://localhost:5000/prod/query';
 
+// 🔥 
+const API_URL = document.querySelector('meta[name="api-url"]')?.content 
+    || window.API_CONFIG?.API_URL
+    || 'http://localhost:5000/prod/query'; 
+
+console.log('📡 API URL:', API_URL);
+console.log('🎯 USE_MOCK_DATA:', window.USE_MOCK_DATA);
+
+/** Request timeout in milliseconds */
+const REQUEST_TIMEOUT = 1000;
+
+/** Default sensor ID for queries */
 const SENSOR_ID = 'sensor-001';
-const REFRESH_INTERVAL = 30000; // 30 seconds
+
+/** Auto-refresh interval in milliseconds (30 seconds) */
+const REFRESH_INTERVAL = 3000;
 
 // ============================================
 // TOAST NOTIFICATION SYSTEM
 // ============================================
 
 /**
- * Show a toast notification
+ * Display a toast notification
  * @param {string} message - Message to display
  * @param {string} type - 'info', 'success', 'warning', 'error'
  * @param {number} duration - Duration in milliseconds
  */
 function showToast(message, type = 'info', duration = 5000) {
-    // Remove existing toasts
+    // Remove existing toast
     const existing = document.querySelector('.toast-container');
     if (existing) existing.remove();
     
-    // Create container
+    // Create toast container
     const container = document.createElement('div');
     container.className = 'toast-container';
     container.style.cssText = `
@@ -61,7 +67,7 @@ function showToast(message, type = 'info', duration = 5000) {
         gap: 12px;
     `;
     
-    // Add icon based on type
+    // Icons for different message types
     const icons = {
         info: 'ℹ️',
         success: '✅',
@@ -91,7 +97,7 @@ function showToast(message, type = 'info', duration = 5000) {
     }, duration);
 }
 
-// Add animation
+// Toast slide-in animation
 const style = document.createElement('style');
 style.textContent = `
     @keyframes slideIn {
@@ -102,44 +108,122 @@ style.textContent = `
 document.head.appendChild(style);
 
 // ============================================
+// HELPER FUNCTIONS
+// ============================================
+
+/**
+ * Round a number to specified decimal places
+ * @param {number} value - Value to round
+ * @param {number} decimals - Number of decimal places
+ * @returns {number} Rounded value
+ */
+function round(value, decimals) {
+    return Number(Math.round(value + 'e' + decimals) + 'e-' + decimals);
+}
+
+/**
+ * Format a date to local time string (YYYY-MM-DD HH:MM:SS)
+ * @param {Date} date - Date object to format
+ * @returns {string} Formatted local time string
+ */
+function formatLocalTime(date) {
+    if (!date) date = new Date();
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+    const seconds = String(date.getSeconds()).padStart(2, '0');
+    return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+}
+
+/**
+ * Calculate age of a data point in minutes
+ * @param {string} timestamp - Timestamp string (ISO or local format)
+ * @returns {number} Age in minutes
+ */
+function getDataAgeMinutes(timestamp) {
+    if (!timestamp) return 999;
+    const now = new Date();
+    let dataTime;
+    
+    // Handle both ISO (UTC) and local format
+    if (timestamp.includes('T')) {
+        // ISO format: "2026-08-05T11:35:26.123Z"
+        dataTime = new Date(timestamp);
+    } else {
+        // Local format: "2026-08-05 11:35:26"
+        const parts = timestamp.split(' ');
+        const dateParts = parts[0].split('-');
+        const timeParts = parts[1].split(':');
+        dataTime = new Date(
+            parseInt(dateParts[0]),
+            parseInt(dateParts[1]) - 1,
+            parseInt(dateParts[2]),
+            parseInt(timeParts[0]),
+            parseInt(timeParts[1]),
+            parseInt(timeParts[2])
+        );
+    }
+    return Math.floor((now - dataTime) / 60000);
+}
+
+/**
+ * Get color-coded age text for a data point
+ * @param {string} timestamp - Timestamp string
+ * @returns {string} Age text with emoji indicator
+ */
+function getDataAgeText(timestamp) {
+    if (!timestamp) return '';
+    const minutes = getDataAgeMinutes(timestamp);
+    
+    if (minutes < 1) return '🟢 just now';
+    if (minutes < 5) return '🟢 ' + minutes + 'm ago';
+    if (minutes < 30) return '🟡 ' + minutes + 'm ago';
+    if (minutes < 60) return '🟠 ' + minutes + 'm ago';
+    return '🔴 ' + Math.floor(minutes / 60) + 'h ' + (minutes % 60) + 'm ago';
+}
+
+// ============================================
 // MOCK DATA GENERATOR
 // ============================================
 
 /**
- * Generate realistic mock data for offline testing
- * @returns {Object} Mock data with latest, history, and stats
+ * Generate realistic mock sensor data with current local timestamps
+ * @returns {Object} Complete data object with latest, history, and stats
  */
 function generateMockData() {
     const now = new Date();
     const history = [];
-    const count = 50;
+    const count = 50; // Number of data points
     
-    // Generate realistic mock data with more variation
-    for (let i = count - 1; i >= 0; i--) {
-        const timestamp = new Date(now - i * 60000); // Every minute
-        
-        // Add some realistic patterns
+    // Generate 50 data points with current local timestamps
+    // i=0 is the newest measurement (now)
+    for (let i = 0; i < count; i++) {
+        const timestamp = new Date(now - i * 60000); // i minutes ago
         const timeOfDay = timestamp.getHours() / 24;
         const dayFactor = Math.sin(timeOfDay * Math.PI * 2) * 3;
         
         history.push({
-            timestamp: timestamp.toISOString(),
-            temperature: 20 + dayFactor + Math.random() * 4 + Math.sin(i / 10) * 2,
-            humidity: 55 + Math.random() * 20 - dayFactor * 2 + Math.cos(i / 15) * 5,
-            soil_moisture: 35 + Math.random() * 30 + Math.sin(i / 20) * 8 - dayFactor * 3
+            timestamp: formatLocalTime(timestamp), // Local time!
+            temperature: round(20 + dayFactor + Math.random() * 4 + Math.sin(i / 10) * 2, 1),
+            humidity: round(55 + Math.random() * 20 - dayFactor * 2 + Math.cos(i / 15) * 5, 1),
+            soil_moisture: round(35 + Math.random() * 30 + Math.sin(i / 20) * 8 - dayFactor * 3, 1)
         });
     }
     
-    const latest = history[history.length - 1] || {
+    // Newest measurement = first entry (index 0)
+    const latest = history[0] || {
         sensor_id: SENSOR_ID,
         temperature: 22.5,
         humidity: 62.0,
         soil_moisture: 45.0,
-        timestamp: new Date().toISOString()
+        timestamp: formatLocalTime(now)
     };
     latest.sensor_id = SENSOR_ID;
-    latest.last_updated = new Date().toISOString();
+    latest.last_updated = formatLocalTime(now);
 
+    // Calculate statistics from historical data
     const temps = history.map(h => h.temperature);
     const hums = history.map(h => h.humidity);
     const soils = history.map(h => h.soil_moisture);
@@ -169,39 +253,50 @@ function generateMockData() {
         count: history.length,
         sensor_id: SENSOR_ID,
         time_range: 'Last 24 hours (MOCK)',
-        query_timestamp: new Date().toISOString()
+        query_timestamp: formatLocalTime(now)
     };
-}
-
-function round(value, decimals) {
-    return Number(Math.round(value + 'e' + decimals) + 'e-' + decimals);
 }
 
 // ============================================
 // GLOBAL VARIABLES
 // ============================================
 
+/** Chart instances */
 let charts = {};
+
+/** Auto-refresh timer reference */
 let refreshTimer = null;
+
+/** Current history data (for manual additions and export) */
 let currentHistory = [];
+
+/** Flag to prevent concurrent refreshes */
 let isRefreshing = false;
+
+/** AbortController for request cancellation */
+let abortController = null;
+
+/** Flag for manual refresh (prevents auto-refresh interference) */
+let isManualRefresh = false;
 
 // ============================================
 // INITIALIZE CHARTS
 // ============================================
 
+/**
+ * Initialize Chart.js charts for temperature, humidity, and soil moisture
+ */
 function initCharts() {
     console.log('📊 Initializing charts...');
     
+    // Base chart configuration
     const chartConfig = {
         type: 'line',
         options: {
             responsive: true,
             maintainAspectRatio: false,
             plugins: {
-                legend: { 
-                    display: false 
-                },
+                legend: { display: false },
                 tooltip: {
                     mode: 'index',
                     intersect: false,
@@ -209,7 +304,12 @@ function initCharts() {
                     titleColor: '#f0f8ff',
                     bodyColor: '#f0f8ff',
                     borderColor: 'rgba(255,255,255,0.1)',
-                    borderWidth: 1
+                    borderWidth: 1,
+                    callbacks: {
+                        label: function(context) {
+                            return context.dataset.label + ': ' + context.parsed.y;
+                        }
+                    }
                 }
             },
             interaction: {
@@ -233,18 +333,10 @@ function initCharts() {
                 }
             },
             elements: {
-                point: { 
-                    radius: 2,
-                    hoverRadius: 4
-                },
-                line: { 
-                    borderWidth: 2,
-                    tension: 0.4
-                }
+                point: { radius: 2, hoverRadius: 4 },
+                line: { borderWidth: 2, tension: 0.4 }
             },
-            animation: {
-                duration: 750
-            }
+            animation: { duration: 750 }
         }
     };
 
@@ -314,23 +406,36 @@ function initCharts() {
 // LOAD DATA
 // ============================================
 
+/**
+ * Load sensor data from API or generate mock data
+ * Handles timeout, abort, and error states
+ */
 async function loadData() {
+    // Prevent concurrent refreshes
     if (isRefreshing) {
         console.log('⏳ Already refreshing...');
         return;
     }
     
+    // Cancel any pending request
+    if (abortController) {
+        abortController.abort();
+        abortController = null;
+    }
+    
     isRefreshing = true;
+    abortController = new AbortController();
     
     try {
         console.log('🔄 Loading data...');
         let data;
 
-        // Use window.USE_MOCK_DATA consistently
+        // Use mock data if in offline mode
         if (window.USE_MOCK_DATA) {
             console.log('📊 Using MOCK data (offline mode)');
-            data = generateMockData();
+            data = generateMockData(); // Always generates fresh data
         } else {
+            // Build API URL with query parameters
             const timeRange = document.getElementById('timeRange');
             const hours = timeRange ? timeRange.value : 24;
             const url = `${API_URL}?sensor_id=${SENSOR_ID}&hours=${hours}`;
@@ -340,26 +445,41 @@ async function loadData() {
             document.getElementById('dataTableBody').innerHTML = 
                 '<tr><td colspan="4" class="loading-text">⏳ Loading data...</td></tr>';
 
-            const response = await fetch(url);
-            
-            if (!response.ok) {
-                let errorMessage = `HTTP ${response.status}: ${response.statusText}`;
-                try {
-                    const errorData = await response.json();
-                    if (errorData.message) {
-                        errorMessage = errorData.message;
-                    }
-                } catch (e) {
-                    // Ignore JSON parsing error
+            // Set timeout for request
+            const timeoutId = setTimeout(() => {
+                if (abortController) {
+                    abortController.abort();
+                    abortController = null;
                 }
-                throw new Error(errorMessage);
+            }, REQUEST_TIMEOUT);
+
+            try {
+                const response = await fetch(url, { signal: abortController.signal });
+                clearTimeout(timeoutId);
+                
+                if (!response.ok) {
+                    let errorMessage = `HTTP ${response.status}: ${response.statusText}`;
+                    try {
+                        const errorData = await response.json();
+                        if (errorData.message) {
+                            errorMessage = errorData.message;
+                        }
+                    } catch (e) {}
+                    throw new Error(errorMessage);
+                }
+                
+                data = await response.json();
+                console.log('✅ Data received:', data);
+            } catch (error) {
+                clearTimeout(timeoutId);
+                if (error.name === 'AbortError') {
+                    throw new Error('Request timeout - please try again');
+                }
+                throw error;
             }
-            
-            data = await response.json();
-            console.log('✅ Data received:', data);
         }
 
-        // Store history for manual additions
+        // Store history for manual additions and export
         if (data.history) {
             currentHistory = data.history;
         }
@@ -369,11 +489,21 @@ async function loadData() {
 
     } catch (error) {
         console.error('❌ Error loading data:', error);
-        showToast(`❌ ${error.message}`, 'error', 5000);
+        let errorMessage = error.message || 'Unknown error';
+        
+        // Handle network errors specifically
+        if (errorMessage.includes('Failed to fetch') || errorMessage.includes('NetworkError')) {
+            errorMessage = 'Network error - please check your connection';
+            showToast(`🌐 ${errorMessage}`, 'warning', 5000);
+        } else {
+            showToast(`❌ ${errorMessage}`, 'error', 5000);
+        }
+        
         document.getElementById('dataTableBody').innerHTML =
-            `<tr><td colspan="4" class="loading-text">❌ Error: ${error.message}</td></tr>`;
+            `<tr><td colspan="4" class="loading-text">❌ Error: ${errorMessage}</td></tr>`;
     } finally {
         isRefreshing = false;
+        abortController = null;
     }
 }
 
@@ -381,6 +511,10 @@ async function loadData() {
 // UPDATE UI
 // ============================================
 
+/**
+ * Update all UI components with new data
+ * @param {Object} data - Data object containing latest, history, and stats
+ */
 function updateUI(data) {
     updateCurrentValues(data.latest);
     updateCharts(data.history);
@@ -389,20 +523,22 @@ function updateUI(data) {
 
     const now = new Date();
     document.getElementById('lastUpdate').textContent =
-        `🔄 Last Update: ${now.toLocaleTimeString('en-US')}`;
+        `🔄 Last Update: ${now.toLocaleTimeString('de-DE')}`;
 
     document.getElementById('dataPoints').textContent =
         `${data.count || 0} data points`;
-    
-    // Update sensor status badge
-    updateSensorStatus(data.latest);
 }
 
 // ============================================
 // UPDATE CURRENT VALUES
 // ============================================
 
+/**
+ * Update the current sensor value cards
+ * @param {Object} latest - Latest sensor data
+ */
 function updateCurrentValues(latest) {
+    // Check if data exists
     if (!latest || Object.keys(latest).length === 0) {
         document.getElementById('currentTemp').textContent = '--°C';
         document.getElementById('currentHumidity').textContent = '--%';
@@ -411,20 +547,45 @@ function updateCurrentValues(latest) {
         return;
     }
 
-    const temp = latest.temperature ? Math.round(latest.temperature * 10) / 10 : null;
-    const hum = latest.humidity ? Math.round(latest.humidity * 10) / 10 : null;
-    const moist = latest.soil_moisture ? Math.round(latest.soil_moisture * 10) / 10 : null;
+    // Check data age and warn if too old
+    const dataAge = getDataAgeMinutes(latest.timestamp);
+    if (dataAge > 30) {
+        showToast(`⚠️ Data is ${dataAge} minutes old! Sensor may be offline.`, 'warning', 10000);
+    }
 
+    // Extract and format values
+    const temp = latest.temperature !== undefined && latest.temperature !== null 
+        ? Math.round(latest.temperature * 10) / 10 : null;
+    const hum = latest.humidity !== undefined && latest.humidity !== null 
+        ? Math.round(latest.humidity * 10) / 10 : null;
+    const moist = latest.soil_moisture !== undefined && latest.soil_moisture !== null 
+        ? Math.round(latest.soil_moisture * 10) / 10 : null;
+
+    // Update display
     document.getElementById('currentTemp').textContent = temp !== null ? `${temp}°C` : '--°C';
     document.getElementById('currentHumidity').textContent = hum !== null ? `${hum}%` : '--%';
     document.getElementById('currentMoisture').textContent = moist !== null ? `${moist}%` : '--%';
 
-    // Single value badges
+    // Show data age in sensor status
+    const ageText = getDataAgeText(latest.timestamp);
+    document.getElementById('sensorStatus').textContent = ageText || '---';
+    document.getElementById('sensorStatus').style.color = 
+        dataAge < 5 ? '#27ae60' : dataAge < 30 ? '#f39c12' : '#e74c3c';
+
+    // Update status badges for each value
     updateStatusBadge('tempStatus', temp, 15, 35, '°C');
     updateStatusBadge('humidityStatus', hum, 30, 80, '%');
     updateStatusBadge('moistureStatus', moist, 30, 70, '%');
 }
 
+/**
+ * Update a single status badge with color coding
+ * @param {string} elementId - HTML element ID
+ * @param {number} value - Current value
+ * @param {number} min - Minimum threshold
+ * @param {number} max - Maximum threshold
+ * @param {string} unit - Unit of measurement
+ */
 function updateStatusBadge(elementId, value, min, max, unit) {
     const el = document.getElementById(elementId);
     if (value === null || value === undefined) {
@@ -444,53 +605,49 @@ function updateStatusBadge(elementId, value, min, max, unit) {
     }
 }
 
-function updateSensorStatus(latest) {
-    const statusEl = document.getElementById('sensorStatus');
-    if (!latest || !latest.timestamp) {
-        statusEl.textContent = '🔴 Offline';
-        statusEl.style.color = '#e74c3c';
-        return;
-    }
-    
-    const lastUpdate = new Date(latest.timestamp);
-    const now = new Date();
-    const diffMinutes = (now - lastUpdate) / 60000;
-    
-    if (diffMinutes < 5) {
-        statusEl.textContent = '🟢 Online';
-        statusEl.style.color = '#27ae60';
-    } else if (diffMinutes < 15) {
-        statusEl.textContent = '🟡 Warning';
-        statusEl.style.color = '#f39c12';
-    } else {
-        statusEl.textContent = '🔴 Offline';
-        statusEl.style.color = '#e74c3c';
-    }
-}
-
 // ============================================
 // UPDATE CHARTS
 // ============================================
 
+/**
+ * Update all charts with historical data
+ * @param {Array} history - Array of historical data points
+ */
 function updateCharts(history) {
     if (!history || history.length === 0) {
         console.log('⚠️ No history data for charts');
         return;
     }
 
-    const labels = history.map(h =>
-        h.timestamp ? h.timestamp.substring(11, 16) : ''
-    );
+    // Reverse for chronological order (oldest to newest)
+    const reversed = [...history].reverse();
+    
+    // Extract labels (only time, not full date)
+    const labels = reversed.map(h => {
+        if (!h.timestamp) return '';
+        const parts = h.timestamp.split(' ');
+        if (parts.length > 1) {
+            return parts[1].substring(0, 5); // HH:MM
+        }
+        return h.timestamp.substring(11, 16); // Fallback for ISO format
+    });
 
-    const tempData = history.map(h => h.temperature || 0);
-    const humData = history.map(h => h.humidity || 0);
-    const moistData = history.map(h => h.soil_moisture || 0);
+    // Extract data for each metric
+    const tempData = reversed.map(h => h.temperature || 0);
+    const humData = reversed.map(h => h.humidity || 0);
+    const moistData = reversed.map(h => h.soil_moisture || 0);
 
     updateChart('tempChart', labels, tempData);
     updateChart('humidityChart', labels, humData);
     updateChart('moistureChart', labels, moistData);
 }
 
+/**
+ * Update a single chart with new data
+ * @param {string} chartId - Chart instance ID
+ * @param {Array} labels - X-axis labels
+ * @param {Array} data - Y-axis data
+ */
 function updateChart(chartId, labels, data) {
     const chart = charts[chartId];
     if (chart) {
@@ -504,6 +661,11 @@ function updateChart(chartId, labels, data) {
 // UPDATE STATISTICS
 // ============================================
 
+/**
+ * Update statistics display
+ * @param {Object} stats - Statistics object
+ * @param {number} count - Total number of data points
+ */
 function updateStats(stats, count) {
     if (!stats || Object.keys(stats).length === 0) {
         ['avgTemp', 'avgHumidity', 'avgMoisture', 'minTemp', 'maxTemp'].forEach(id => {
@@ -528,9 +690,14 @@ function updateStats(stats, count) {
 }
 
 // ============================================
-// UPDATE TABLE
+// UPDATE TABLE - NEWEST FIRST
 // ============================================
 
+/**
+ * Update the recent measurements table
+ * Displays newest data points first
+ * @param {Array} history - Array of historical data points
+ */
 function updateTable(history) {
     const tbody = document.getElementById('dataTableBody');
     if (!history || history.length === 0) {
@@ -538,23 +705,27 @@ function updateTable(history) {
         return;
     }
 
+    // ✅ NEWEST FIRST: Display the 20 most recent measurements
     const displayData = history.slice(0, 20);
+    
     tbody.innerHTML = displayData.map(row => {
-        const ts = row.timestamp ? row.timestamp.replace('T', ' ').substring(0, 19) : '--';
+        const ts = row.timestamp || '--';
+        const ageText = getDataAgeText(row.timestamp);
 
-        // Get status icons for each value
         const tempIcon = getStatusIndicator(row.temperature, 15, 35);
         const humIcon = getStatusIndicator(row.humidity, 30, 80);
         const moistIcon = getStatusIndicator(row.soil_moisture, 30, 70);
         
-        // Format values
-        const tempVal = row.temperature ? Math.round(row.temperature * 10) / 10 : '--';
-        const humVal = row.humidity ? Math.round(row.humidity * 10) / 10 : '--';
-        const moistVal = row.soil_moisture ? Math.round(row.soil_moisture * 10) / 10 : '--';
+        const tempVal = row.temperature !== undefined && row.temperature !== null 
+            ? Math.round(row.temperature * 10) / 10 : '--';
+        const humVal = row.humidity !== undefined && row.humidity !== null 
+            ? Math.round(row.humidity * 10) / 10 : '--';
+        const moistVal = row.soil_moisture !== undefined && row.soil_moisture !== null 
+            ? Math.round(row.soil_moisture * 10) / 10 : '--';
         
         return `
             <tr>
-                <td>${ts}</td>
+                <td>${ts} <span style="font-size:0.7rem; opacity:0.6;">${ageText}</span></td>
                 <td>${tempIcon} ${tempVal}</td>
                 <td>${humIcon} ${humVal}</td>
                 <td>${moistIcon} ${moistVal}</td>
@@ -564,32 +735,44 @@ function updateTable(history) {
 }
 
 // ============================================
-// GET STATUS ICON FOR TABLE VALUES
+// GET STATUS ICON
 // ============================================
 
+/**
+ * Get status indicator icon for table values
+ * @param {number} value - Value to check
+ * @param {number} min - Minimum threshold
+ * @param {number} max - Maximum threshold
+ * @returns {string} Emoji indicator
+ */
 function getStatusIndicator(value, min, max) {
     if (value === null || value === undefined || isNaN(value)) {
         return '⏳';
     }
     if (value < min) {
-        return '🔽';
+        return '🔽'; // Too low
     } else if (value > max) {
-        return '🔼';
+        return '🔼'; // Too high
     } else {
-        return '✅';
+        return '✅'; // Normal
     }
 }
 
 // ============================================
-// MANUAL DATA INPUT
+// MANUAL DATA INPUT - WITH LOCAL TIME
 // ============================================
 
+/**
+ * Add a manually entered data point to the dashboard
+ * Uses current local time as timestamp
+ */
 function addManualDataPoint() {
     const sensorId = document.getElementById('manualSensorId').value || SENSOR_ID;
     const temp = parseFloat(document.getElementById('manualTemp').value);
     const humidity = parseFloat(document.getElementById('manualHumidity').value);
     const moisture = parseFloat(document.getElementById('manualMoisture').value);
 
+    // Validate inputs
     if (isNaN(temp) || isNaN(humidity) || isNaN(moisture)) {
         showToast('❌ Please enter valid numbers for all fields', 'error');
         document.getElementById('manualFeedback').textContent = '❌ Please enter valid numbers.';
@@ -597,6 +780,7 @@ function addManualDataPoint() {
         return;
     }
 
+    // Validate ranges
     if (temp < -50 || temp > 100) {
         showToast('❌ Temperature must be between -50 and 100°C', 'error');
         return;
@@ -612,7 +796,7 @@ function addManualDataPoint() {
 
     const now = new Date();
     const newPoint = {
-        timestamp: now.toISOString(),
+        timestamp: formatLocalTime(now), // Use local time!
         temperature: temp,
         humidity: humidity,
         soil_moisture: moisture,
@@ -620,15 +804,15 @@ function addManualDataPoint() {
         battery: 100
     };
 
-    // Insert into history (newest first)
+    // ✅ NEWEST FIRST: Add to beginning of array
     currentHistory.unshift(newPoint);
 
-    // Keep max 200 points
+    // Keep maximum 200 data points
     if (currentHistory.length > 200) {
         currentHistory = currentHistory.slice(0, 200);
     }
 
-    // Recalculate stats
+    // Recalculate statistics
     const stats = calculateStats(currentHistory);
 
     const data = {
@@ -638,15 +822,15 @@ function addManualDataPoint() {
         count: currentHistory.length,
         sensor_id: sensorId,
         time_range: 'Manually added',
-        query_timestamp: now.toISOString()
+        query_timestamp: formatLocalTime(now)
     };
 
     updateUI(data);
 
+    // Show feedback with alerts if thresholds are exceeded
     let feedbackMsg = `✅ Data point added: ${temp}°C, ${humidity}%, ${moisture}%`;
     let feedbackColor = '#69db7c';
 
-    // Check for alert conditions
     if (moisture < 30) {
         feedbackMsg += ' ⚠️ WARNING: Soil Moisture below 30%!';
         feedbackColor = '#ff6b6b';
@@ -663,8 +847,14 @@ function addManualDataPoint() {
     document.getElementById('manualFeedback').style.color = feedbackColor;
 }
 
+/**
+ * Calculate statistics from historical data
+ * @param {Array} history - Array of historical data points
+ * @returns {Object} Statistics object with avg, min, max for each metric
+ */
 function calculateStats(history) {
     if (!history || history.length === 0) { return {}; }
+    
     const temps = history.map(h => h.temperature);
     const hums = history.map(h => h.humidity);
     const soils = history.map(h => h.soil_moisture);
@@ -692,21 +882,37 @@ function calculateStats(history) {
 // REFRESH & AUTO-REFRESH
 // ============================================
 
+/**
+ * Manually refresh data
+ */
 function refreshData() {
     console.log('🔄 Manual refresh...');
+    isManualRefresh = true;
     loadData();
+    setTimeout(() => { isManualRefresh = false; }, 1000);
 }
 
+/**
+ * Start auto-refresh timer
+ * Refreshes data every REFRESH_INTERVAL milliseconds
+ */
 function startAutoRefresh() {
     if (refreshTimer) clearInterval(refreshTimer);
-    refreshTimer = setInterval(loadData, REFRESH_INTERVAL);
+    refreshTimer = setInterval(() => {
+        if (!isManualRefresh) {
+            loadData();
+        }
+    }, REFRESH_INTERVAL);
     console.log(`⏰ Auto-refresh started (${REFRESH_INTERVAL / 1000}s)`);
 }
 
 // ============================================
-// EXPORT DATA (NEW FEATURE)
+// EXPORT DATA
 // ============================================
 
+/**
+ * Export current data as JSON file
+ */
 function exportData() {
     if (!currentHistory || currentHistory.length === 0) {
         showToast('❌ No data to export', 'error');
@@ -716,7 +922,7 @@ function exportData() {
     try {
         const data = {
             sensor_id: SENSOR_ID,
-            export_date: new Date().toISOString(),
+            export_date: formatLocalTime(new Date()),
             data_points: currentHistory.length,
             data: currentHistory
         };
@@ -742,13 +948,16 @@ function exportData() {
 // INITIALIZATION
 // ============================================
 
+/**
+ * Initialize dashboard on page load
+ */
 document.addEventListener('DOMContentLoaded', function() {
     console.log('🚀 Initializing dashboard...');
     console.log(`📡 API URL: ${API_URL}`);
     console.log(`🔑 Sensor ID: ${SENSOR_ID}`);
     console.log(`🎯 Mock Mode: ${window.USE_MOCK_DATA ? 'ON (Offline)' : 'OFF (AWS)'}`);
 
-    // Display Mode in header
+    // Add mode indicator to header
     const modeIndicator = document.createElement('span');
     modeIndicator.className = 'mode-indicator';
     modeIndicator.textContent = window.USE_MOCK_DATA ? '📡 OFFLINE' : '☁️ ONLINE';
@@ -777,11 +986,12 @@ document.addEventListener('DOMContentLoaded', function() {
         headerRight.appendChild(exportBtn);
     }
 
+    // Initialize charts and load initial data
     initCharts();
     loadData();
     startAutoRefresh();
 
-    // Add keyboard shortcut (Ctrl+R for refresh)
+    // Keyboard shortcut: Ctrl+R for refresh
     document.addEventListener('keydown', function(e) {
         if (e.ctrlKey && e.key === 'r') {
             e.preventDefault();
@@ -794,11 +1004,13 @@ document.addEventListener('DOMContentLoaded', function() {
 // GLOBAL ERROR HANDLING
 // ============================================
 
+// Handle unhandled promise rejections
 window.addEventListener('unhandledrejection', function(event) {
     console.error('❌ Unhandled Promise Rejection:', event.reason);
     showToast(`⚠️ Unhandled error: ${event.reason?.message || 'Unknown error'}`, 'error');
 });
 
+// Handle uncaught errors
 window.addEventListener('error', function(event) {
     console.error('❌ Uncaught error:', event.error);
     showToast(`⚠️ Error: ${event.message || 'Unknown error'}`, 'error');
@@ -807,6 +1019,8 @@ window.addEventListener('error', function(event) {
 // ============================================
 // EXPOSE FUNCTIONS TO GLOBAL SCOPE
 // ============================================
+
+// Make functions globally accessible for inline HTML event handlers
 window.loadData = loadData;
 window.refreshData = refreshData;
 window.addManualDataPoint = addManualDataPoint;

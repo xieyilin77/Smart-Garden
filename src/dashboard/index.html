@@ -1,9 +1,10 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- API URL Meta Tag - will be replaced during deployment -->
+    <meta name="api-url" content="{{API_GATEWAY_URL}}" />
     <title>🌱 Smart Garden Manager</title>
     <link rel="stylesheet" href="style.css" />
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -131,7 +132,7 @@
             </div>
         </section>
 
-         <!-- Raw Data Table -->
+        <!-- Raw Data Table -->
         <section class="section raw-data-section">
             <h2>📋 Recent Measurements</h2>
             <div class="table-container">
@@ -154,7 +155,7 @@
         </section>
 
         <!-- ============================================ -->
-        <!-- MANUAL DATA INPUT (NEW) -->
+        <!-- MANUAL DATA INPUT -->
         <!-- ============================================ -->
         <section class="section" style="border-left: 3px solid #ffd43b;">
             <h2>✏️ Manual Data Input (Test)</h2>
@@ -187,7 +188,6 @@
     <!-- ============================================ -->
     <footer>
         <p>🌱 Smart Garden Manager &copy; 2026 - Serverless IoT Solution</p>
-        <!-- <p class="footer-tech">Powered by AWS Lambda, DynamoDB, IoT Core</p> -->
     </footer>
 
     <script src="dashboard.js"></script>

@@ -64,30 +64,30 @@ def receive_data():
 
 @app.route('/prod/query', methods=['GET'])
 def query_data():
-    """Return ACTUAL received data + calculated stats in the format dashboard.js expects"""
+    """Return ACTUAL received data + calculated stats"""
     try:
-        # 1. Daten aus dem Speicher holen (die echten Daten vom Simulator!)
-        history = received_data[-50:] # Die letzten 50 Datenpunkte
+        # Get the 50 most recent data points
+        history = received_data[-50:] if received_data else []
         
         if not history:
-            # Wenn noch keine Daten da sind, leeres Objekt zurückgeben
+            # Return empty response if no data
             return jsonify({
                 'latest': {},
                 'history': [],
                 'stats': {},
                 'count': 0,
                 'sensor_id': request.args.get('sensor_id', 'sensor-001'),
-                'time_range': 'Last 50 readings',
+                'time_range': 'No data',
                 'query_timestamp': datetime.datetime.now(datetime.UTC).isoformat() + 'Z'
             }), 200
 
-        # 2. Latest Wert bestimmen
-        latest = history[-1] # Der neueste Eintrag
+        # Latest value = newest entry
+        latest = history[-1]
 
-        # 3. Statistiken aus den ECHTEN Daten berechnen (damit die Karten unten stimmen)
-        temps = [h.get('temperature', 0) for h in history if h.get('temperature')]
-        hums = [h.get('humidity', 0) for h in history if h.get('humidity')]
-        soils = [h.get('soil_moisture', 0) for h in history if h.get('soil_moisture')]
+        # Calculate statistics from REAL data
+        temps = [h.get('temperature', 0) for h in history if h.get('temperature') is not None]
+        hums = [h.get('humidity', 0) for h in history if h.get('humidity') is not None]
+        soils = [h.get('soil_moisture', 0) for h in history if h.get('soil_moisture') is not None]
 
         stats = {}
         if temps:
@@ -109,14 +109,14 @@ def query_data():
                 'max': round(max(soils), 1)
             }
 
-        # 4. Alles im erwarteten JSON-Format zurückgeben
+        # Return in the format dashboard.js expects
         return jsonify({
             'latest': latest,
-            'history': history, # Wichtig: Hier liegen die echten Daten!
+            'history': list(reversed(history)),  # Newest first for dashboard
             'stats': stats,
             'count': len(history),
             'sensor_id': latest.get('sensor_id', 'sensor-001'),
-            'time_range': 'Last 50 readings',
+            'time_range': f'Last {len(history)} readings',
             'query_timestamp': datetime.datetime.now(datetime.UTC).isoformat() + 'Z'
         }), 200
         
