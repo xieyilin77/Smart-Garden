@@ -176,7 +176,7 @@ def lambda_handler(event: Dict, context: Any) -> Dict:
             query_params = {
                 'KeyConditionExpression': 'sensor_id = :sid AND #ts >= :cutoff',
                 'ExpressionAttributeNames': {
-                    '#ts': 'timestamp'  # ✅ This is the correct fix!
+                    '#ts': 'timestamp'
                 },
                 'ExpressionAttributeValues': {
                     ':sid': sensor_id,
