@@ -149,28 +149,56 @@ if (-not (Create-LambdaZip (Join-Path $LambdaDir "query_data.py") "query-data.zi
 Write-Host ""
 
 # ============================================
-# 5. BUCKET ERSTELLEN (VOM SKRIPT)
+# 5. CREATE LAMBDA CODE BUCKET
 # ============================================
-Write-Host "Creating Lambda code bucket..." -ForegroundColor Yellow
+Write-Host "Creating Lambda code bucket in region $Region..." -ForegroundColor Yellow
 
-# Prüfe ob Bucket existiert
-aws s3 ls "s3://$LAMBDA_CODE_BUCKET" --region $Region 2>&1
+# Check if bucket exists and get its region
+$bucketExists = $false
+$existingRegion = aws s3api get-bucket-location --bucket $LAMBDA_CODE_BUCKET --query "LocationConstraint" --output text 2>$null
 
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "  Creating bucket: $LAMBDA_CODE_BUCKET" -ForegroundColor Gray
+if ($LASTEXITCODE -eq 0) {
+    # If LocationConstraint is null or "None", bucket is in us-east-1
+    if (-not $existingRegion -or $existingRegion -eq "None") {
+        $existingRegion = "us-east-1"
+    }
+    
+    if ($existingRegion -eq $Region) {
+        Write-Host "  OK: Bucket exists in correct region ($Region)" -ForegroundColor Green
+        $bucketExists = $true
+    } else {
+        Write-Host "  WARNING: Bucket exists in $existingRegion but should be in $Region" -ForegroundColor Yellow
+        Write-Host "  Deleting bucket to recreate in correct region..." -ForegroundColor Yellow
+        aws s3 rb "s3://$LAMBDA_CODE_BUCKET" --force --region $existingRegion 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "  OK: Bucket deleted" -ForegroundColor Green
+            $bucketExists = $false
+        } else {
+            Write-Host "  ERROR: Failed to delete bucket" -ForegroundColor Red
+            Write-Host "  Please delete the bucket manually and try again" -ForegroundColor Yellow
+            exit 1
+        }
+    }
+}
+
+if (-not $bucketExists) {
+    Write-Host "  Creating bucket: $LAMBDA_CODE_BUCKET in $Region" -ForegroundColor Gray
+    
+    # IMPORTANT: LocationConstraint is REQUIRED for all regions EXCEPT us-east-1
     if ($Region -eq "us-east-1") {
         aws s3api create-bucket --bucket $LAMBDA_CODE_BUCKET --region $Region
     } else {
-        aws s3api create-bucket --bucket $LAMBDA_CODE_BUCKET --region $Region --create-bucket-configuration LocationConstraint=$Region
+        aws s3api create-bucket `
+            --bucket $LAMBDA_CODE_BUCKET `
+            --region $Region `
+            --create-bucket-configuration LocationConstraint=$Region
     }
     
     if ($LASTEXITCODE -ne 0) {
         Write-Host "  ERROR: Failed to create bucket" -ForegroundColor Red
         exit 1
     }
-    Write-Host "  OK: Bucket created" -ForegroundColor Green
-} else {
-    Write-Host "  OK: Bucket exists" -ForegroundColor Green
+    Write-Host "  OK: Bucket created in $Region" -ForegroundColor Green
 }
 Write-Host ""
 
@@ -179,10 +207,10 @@ Write-Host ""
 # ============================================
 Write-Host "Uploading Lambda code to S3..." -ForegroundColor Yellow
 
-# Lösche alte Dateien zuerst
+# Delete old files first
 aws s3 rm "s3://$LAMBDA_CODE_BUCKET/lambda/" --recursive --region $Region 2>&1
 
-# Lade neue Dateien hoch
+# Upload new files
 aws s3 sync "$PackagesDir\" "s3://$LAMBDA_CODE_BUCKET/lambda/" --exclude ".gitkeep" --region $Region
 
 if ($LASTEXITCODE -ne 0) {
@@ -190,7 +218,7 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
-# VERIFIZIERE
+# VERIFY
 Write-Host "  Verifying upload..." -ForegroundColor Gray
 $files = aws s3 ls "s3://$LAMBDA_CODE_BUCKET/lambda/" --region $Region 2>&1
 Write-Host "  Files in bucket:" -ForegroundColor Gray
@@ -327,6 +355,50 @@ if ($apiUrl -and $apiUrl -ne "None") {
 }
 if ($iotTopic -and $iotTopic -ne "None") {
     Write-Host "  IoT Topic: $iotTopic" -ForegroundColor Gray
+}
+Write-Host ""
+
+# ============================================
+# 9.5 VERIFY BUCKET REGIONS (NEW)
+# ============================================
+Write-Host "Verifying all buckets are in region $Region..." -ForegroundColor Yellow
+
+# Check Website Bucket
+$websiteBucketRegion = aws s3api get-bucket-location --bucket $WEBSITE_BUCKET --query "LocationConstraint" --output text 2>$null
+if (-not $websiteBucketRegion -or $websiteBucketRegion -eq "None") { 
+    $websiteBucketRegion = "us-east-1" 
+}
+
+if ($websiteBucketRegion -ne $Region) {
+    Write-Host "  WARNING: Website bucket is in $websiteBucketRegion (should be $Region)" -ForegroundColor Yellow
+    Write-Host "  This may cause issues with CloudFront" -ForegroundColor Yellow
+} else {
+    Write-Host "  OK: Website bucket is in $Region" -ForegroundColor Green
+}
+
+# Check Data Bucket
+$dataBucketRegion = aws s3api get-bucket-location --bucket $DATA_BUCKET --query "LocationConstraint" --output text 2>$null
+if (-not $dataBucketRegion -or $dataBucketRegion -eq "None") { 
+    $dataBucketRegion = "us-east-1" 
+}
+
+if ($dataBucketRegion -ne $Region) {
+    Write-Host "  WARNING: Data bucket is in $dataBucketRegion (should be $Region)" -ForegroundColor Yellow
+} else {
+    Write-Host "  OK: Data bucket is in $Region" -ForegroundColor Green
+}
+
+# Check Lambda Code Bucket
+$lambdaBucketRegion = aws s3api get-bucket-location --bucket $LAMBDA_CODE_BUCKET --query "LocationConstraint" --output text 2>$null
+if (-not $lambdaBucketRegion -or $lambdaBucketRegion -eq "None") { 
+    $lambdaBucketRegion = "us-east-1" 
+}
+
+if ($lambdaBucketRegion -ne $Region) {
+    Write-Host "  WARNING: Lambda bucket is in $lambdaBucketRegion (should be $Region)" -ForegroundColor Yellow
+    Write-Host "  This may cause issues with Lambda deployment" -ForegroundColor Yellow
+} else {
+    Write-Host "  OK: Lambda bucket is in $Region" -ForegroundColor Green
 }
 Write-Host ""
 
