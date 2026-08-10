@@ -11,7 +11,7 @@ import logging
 import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Dict, Any, Optional, List, Tuple
+from typing import Dict, Optional, List, Tuple
 import boto3
 from botocore.exceptions import ClientError
 
@@ -24,6 +24,33 @@ DEBUG_MODE = os.getenv("DEBUG", "false").lower() in ["true", "1", "yes"]
 
 logger = logging.getLogger()
 logger.setLevel(getattr(logging, LOG_LEVEL, logging.INFO))
+
+# ============================================
+# AWS CLIENTS
+# ============================================
+
+dynamodb = boto3.resource('dynamodb')
+table_latest = dynamodb.Table(os.environ.get('LATEST_TABLE', 'smart-garden-sensor-latest'))
+table_history = dynamodb.Table(os.environ.get('HISTORY_TABLE', 'smart-garden-sensor-data'))
+
+sns = boto3.client('sns')
+sns_topic_arn = os.environ.get('SNS_TOPIC_ARN', '')
+
+s3 = boto3.client('s3')
+data_bucket = os.environ.get('DATA_BUCKET', '')
+
+# ============================================
+# THRESHOLDS
+# ============================================
+
+THRESHOLDS = {
+    'soil_moisture_low': float(os.getenv('THRESHOLD_MOISTURE_LOW', '30')),
+    'soil_moisture_high': float(os.getenv('THRESHOLD_MOISTURE_HIGH', '80')),
+    'temperature_high': float(os.getenv('THRESHOLD_TEMP_HIGH', '35')),
+    'temperature_low': float(os.getenv('THRESHOLD_TEMP_LOW', '5')),
+    'humidity_low': float(os.getenv('THRESHOLD_HUMIDITY_LOW', '40')),
+    'humidity_high': float(os.getenv('THRESHOLD_HUMIDITY_HIGH', '90')),
+}
 
 # ============================================
 # HELPER FUNCTIONS
@@ -52,36 +79,6 @@ def safe_decimal(value) -> Decimal:
         return Decimal('0')
 
 # ============================================
-# AWS CLIENTS
-# ============================================
-
-# DynamoDB Tabellen
-dynamodb = boto3.resource('dynamodb')
-table_latest = dynamodb.Table(os.environ.get('LATEST_TABLE', 'smart-garden-sensor-latest'))
-table_history = dynamodb.Table(os.environ.get('HISTORY_TABLE', 'smart-garden-sensor-data'))
-
-# SNS (für Alarme)
-sns = boto3.client('sns')
-sns_topic_arn = os.environ.get('SNS_TOPIC_ARN', '')
-
-# S3 (für Archivierung)
-s3 = boto3.client('s3')
-data_bucket = os.environ.get('DATA_BUCKET', '')
-
-# ============================================
-# THRESHOLDS
-# ============================================
-
-THRESHOLDS = {
-    'soil_moisture_low': float(os.getenv('THRESHOLD_MOISTURE_LOW', '30')),
-    'soil_moisture_high': float(os.getenv('THRESHOLD_MOISTURE_HIGH', '80')),
-    'temperature_high': float(os.getenv('THRESHOLD_TEMP_HIGH', '35')),
-    'temperature_low': float(os.getenv('THRESHOLD_TEMP_LOW', '5')),
-    'humidity_low': float(os.getenv('THRESHOLD_HUMIDITY_LOW', '40')),
-    'humidity_high': float(os.getenv('THRESHOLD_HUMIDITY_HIGH', '90')),
-}
-
-# ============================================
 # LAMBDA HANDLER
 # ============================================
 
@@ -93,11 +90,11 @@ def lambda_handler(event, context):
     logger.info(f"Processing request {request_id}")
     
     try:
-        # 1. Daten aus Event parsen
+        # Parse data from event
         data = parse_event(event)
         logger.debug(f"Parsed data: {json.dumps(data, default=str)}")
         
-        # 2. Daten validieren
+        # Validate data
         is_valid, error_message = validate_data(data)
         if not is_valid:
             logger.warning(f"Invalid data: {error_message}")
@@ -114,7 +111,7 @@ def lambda_handler(event, context):
                 })
             }
         
-        # 3. Werte extrahieren (ALLE als Decimal)
+        # Extract values
         sensor_id = str(data.get('sensor_id', 'sensor-001'))
         temperature = safe_decimal(data.get('temperature', 0))
         humidity = safe_decimal(data.get('humidity', 0))
@@ -128,28 +125,27 @@ def lambda_handler(event, context):
             f"M={float(soil_moisture):.1f}%"
         )
         
-        # 4. Latest Item für DynamoDB (ALLE Werte als Decimal)
+        # Latest Item for DynamoDB
         latest_item = {
             'sensor_id': sensor_id,
-            'temperature': temperature,      # ✅ Decimal
-            'humidity': humidity,            # ✅ Decimal
-            'soil_moisture': soil_moisture,  # ✅ Decimal
+            'temperature': temperature,
+            'humidity': humidity,
+            'soil_moisture': soil_moisture,
             'timestamp': timestamp,
             'last_updated': get_utc_timestamp()
         }
         
-        # Optional fields
         if 'location' in data:
             latest_item['location'] = str(data['location'])
         if 'battery' in data:
             latest_item['battery'] = safe_decimal(data['battery'])
         
-        # 5. Latest in DynamoDB speichern
+        # Store latest in DynamoDB
         try:
             table_latest.put_item(Item=latest_item)
-            logger.info(f"✅ Latest data stored for {sensor_id}")
+            logger.info(f"Latest data stored for {sensor_id}")
         except ClientError as e:
-            logger.error(f"❌ Failed to store latest data: {e}")
+            logger.error(f"Failed to store latest data: {e}")
             return {
                 'statusCode': 500,
                 'headers': {
@@ -163,46 +159,45 @@ def lambda_handler(event, context):
                 })
             }
         
-        # 6. History Item für DynamoDB
+        # History Item for DynamoDB
         history_item = {
             'sensor_id': sensor_id,
             'timestamp': timestamp,
-            'temperature': temperature,      # ✅ Decimal
-            'humidity': humidity,            # ✅ Decimal
-            'soil_moisture': soil_moisture,  # ✅ Decimal
+            'temperature': temperature,
+            'humidity': humidity,
+            'soil_moisture': soil_moisture,
             'record_id': str(uuid.uuid4())
         }
         
-        # Optional fields
         if 'location' in data:
             history_item['location'] = str(data['location'])
         if 'battery' in data:
             history_item['battery'] = safe_decimal(data['battery'])
         
-        # 7. History in DynamoDB speichern
+        # Store history in DynamoDB
         try:
             table_history.put_item(Item=history_item)
-            logger.info(f"✅ History data stored for {sensor_id}")
+            logger.info(f"History data stored for {sensor_id}")
         except ClientError as e:
-            logger.error(f"❌ Failed to store history data: {e}")
+            logger.error(f"Failed to store history data: {e}")
         
-        # 8. S3 Archivierung (optional)
+        # S3 archiving
         try:
             if data_bucket:
                 archive_to_s3(data, timestamp)
         except Exception as e:
-            logger.error(f"❌ S3 archiving failed: {e}")
+            logger.error(f"S3 archiving failed: {e}")
         
-        # 9. Alarme prüfen
+        # Check thresholds
         alerts = check_thresholds(data)
         if alerts:
-            logger.info(f"⚠️ Alerts detected: {len(alerts)}")
+            logger.info(f"Alerts detected: {len(alerts)}")
             for alert in alerts:
                 logger.warning(f"Alert: {alert}")
             if sns_topic_arn:
                 send_alerts(alerts, data)
         
-        # 10. Erfolgreiche Antwort
+        # Success response
         return {
             'statusCode': 200,
             'headers': {
@@ -220,7 +215,7 @@ def lambda_handler(event, context):
         }
         
     except Exception as e:
-        logger.error(f"❌ Unexpected error: {e}", exc_info=True)
+        logger.error(f"Unexpected error: {e}", exc_info=True)
         return {
             'statusCode': 500,
             'headers': {
@@ -235,7 +230,7 @@ def lambda_handler(event, context):
         }
 
 # ============================================
-# HELPER FUNKTIONEN
+# HELPER FUNCTIONS
 # ============================================
 
 def parse_event(event: Dict) -> Dict:
@@ -353,8 +348,10 @@ def archive_to_s3(data: Dict, timestamp: str) -> str:
     
     try:
         sensor_id = data.get('sensor_id', 'unknown')
-        date_str = get_utc_timestamp()[:10].replace('-', '/')
-        key = f"raw-data/{sensor_id}/{date_str}/data.jsonl"
+        ts = datetime.now(timezone.utc)
+        date_path = ts.strftime("%Y/%m/%d")
+        time_path = ts.strftime("%H-%M-%S-%f")
+        key = f"raw-data/{sensor_id}/{date_path}/{time_path}.json"
         
         json_line = json.dumps(data, cls=DecimalEncoder) + '\n'
         

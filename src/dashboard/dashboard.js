@@ -6,26 +6,20 @@
 // CONFIGURATION
 // ============================================
 
-window.USE_MOCK_DATA = false;
-
-// AWS API Gateway URL
-const API_URL = 'https://2v2iowda69.execute-api.us-west-2.amazonaws.com/prod/data';
-// If the above doesn't work, try this one (without the trailing slash issues):
-// const API_URL = 'https://2v2iowda69.execute-api.us-west-2.amazonaws.com/prod/data';
+const API_URL = window.SMART_GARDEN_CONFIG.API_URL;
+const REQUEST_TIMEOUT = window.SMART_GARDEN_CONFIG.REQUEST_TIMEOUT;
+const SENSOR_ID = window.SMART_GARDEN_CONFIG.SENSOR_ID;
+const REFRESH_INTERVAL = window.SMART_GARDEN_CONFIG.REFRESH_INTERVAL;
 
 console.log('📡 API URL:', API_URL);
 console.log('🎯 USE_MOCK_DATA:', window.USE_MOCK_DATA);
-
-const REQUEST_TIMEOUT = 15000;
-const SENSOR_ID = 'sensor-001';
-const REFRESH_INTERVAL = 10000;
+console.log('🔑 SENSOR ID:', SENSOR_ID);
 
 // ============================================
 // TOAST NOTIFICATION
 // ============================================
 
 function showToast(message, type = 'info', duration = 5000) {
-    // Remove existing toasts
     document.querySelectorAll('.toast-container').forEach(el => el.remove());
     
     const container = document.createElement('div');
@@ -464,27 +458,22 @@ function updateUI(data) {
     
     console.log('🔄 Updating UI...');
     
-    // Update current values
     if (data.latest) {
         updateCurrentValues(data.latest);
     }
     
-    // Update charts
     if (data.history && data.history.length > 0) {
         updateCharts(data.history);
     }
     
-    // Update stats
     if (data.stats) {
         updateStats(data.stats, data.count);
     }
     
-    // Update table
     if (data.history) {
         updateTable(data.history);
     }
     
-    // Update timestamp
     const now = new Date();
     document.getElementById('lastUpdate').textContent = 
         `🔄 Last Update: ${now.toLocaleTimeString('de-DE')}`;
@@ -565,7 +554,6 @@ function updateCharts(history) {
     
     console.log(`📊 Updating charts with ${history.length} records`);
     
-    // Reverse to show oldest to newest (left to right)
     const reversed = [...history].reverse();
     const labels = reversed.map(h => {
         if (!h.timestamp) return '';
@@ -653,8 +641,63 @@ function updateTable(history) {
     
     const displayData = history.slice(0, 20);
     tbody.innerHTML = displayData.map(row => {
-        const ts = row.timestamp || '--';
-        const ageText = getDataAgeText(row.timestamp);
+        const rawTimestamp = row.timestamp || '--';
+        let displayTimestamp = rawTimestamp;
+        let ageText = '';
+        
+        if (rawTimestamp.includes(' ')) {
+            displayTimestamp = rawTimestamp;
+            const minutes = getDataAgeMinutes(rawTimestamp);
+            if (minutes < 1) {
+                ageText = 'Just now';
+            } else if (minutes < 5) {
+                ageText = `${minutes}m ago`;
+            } else if (minutes < 30) {
+                ageText = `${minutes}m ago`;
+            } else if (minutes < 60) {
+                ageText = `${minutes}m ago`;
+            } else {
+                const hours = Math.floor(minutes / 60);
+                const mins = minutes % 60;
+                ageText = `${hours}h ${mins}m ago`;
+            }
+        }
+        else if (rawTimestamp.includes('T')) {
+            try {
+                const date = new Date(rawTimestamp);
+                if (!isNaN(date.getTime())) {
+                    const year = date.getFullYear();
+                    const month = String(date.getMonth() + 1).padStart(2, '0');
+                    const day = String(date.getDate()).padStart(2, '0');
+                    const hours = String(date.getHours()).padStart(2, '0');
+                    const minutes = String(date.getMinutes()).padStart(2, '0');
+                    const seconds = String(date.getSeconds()).padStart(2, '0');
+                    displayTimestamp = `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+                    
+                    const mins = getDataAgeMinutes(rawTimestamp);
+                    if (mins < 1) {
+                        ageText = 'Just now';
+                    } else if (mins < 5) {
+                        ageText = `${mins}m ago`;
+                    } else if (mins < 30) {
+                        ageText = `${mins}m ago`;
+                    } else if (mins < 60) {
+                        ageText = `${mins}m ago`;
+                    } else {
+                        const hours = Math.floor(mins / 60);
+                        const minsLeft = mins % 60;
+                        ageText = `${hours}h ${minsLeft}m ago`;
+                    }
+                }
+            } catch (e) {
+                displayTimestamp = rawTimestamp;
+            }
+        }
+        // Fallback
+        else {
+            displayTimestamp = rawTimestamp;
+        }
+        
         const tempVal = row.temperature !== undefined && row.temperature !== null 
             ? round(row.temperature, 1) : '--';
         const humVal = row.humidity !== undefined && row.humidity !== null 
@@ -666,8 +709,10 @@ function updateTable(history) {
         const humIcon = getStatusIndicator(humVal, 30, 80);
         const moistIcon = getStatusIndicator(moistVal, 30, 70);
         
+        const displayText = ageText ? `${displayTimestamp} ${ageText}` : displayTimestamp;
+        
         return `<tr>
-            <td>${ts} <span style="font-size:0.7rem;opacity:0.6;">${ageText}</span></td>
+            <td>${displayText}</td>
             <td>${tempIcon} ${tempVal}</td>
             <td>${humIcon} ${humVal}</td>
             <td>${moistIcon} ${moistVal}</td>
@@ -845,7 +890,6 @@ document.addEventListener('DOMContentLoaded', function() {
     console.log(`🔑 Sensor ID: ${SENSOR_ID}`);
     console.log(`🎯 Mock Mode: ${window.USE_MOCK_DATA ? 'ON (Offline)' : 'OFF (AWS)'}`);
     
-    // Mode Indicator
     const modeIndicator = document.createElement('span');
     modeIndicator.className = 'mode-indicator';
     modeIndicator.textContent = window.USE_MOCK_DATA ? '📡 OFFLINE' : '☁️ ONLINE';
@@ -856,7 +900,6 @@ document.addEventListener('DOMContentLoaded', function() {
         headerRight.appendChild(modeIndicator); 
     }
     
-    // Export Button
     const exportBtn = document.createElement('button');
     exportBtn.className = 'refresh-btn';
     exportBtn.textContent = '📥 Export';
@@ -867,7 +910,6 @@ document.addEventListener('DOMContentLoaded', function() {
         headerRight.appendChild(exportBtn); 
     }
     
-    // Debug Button
     const debugBtn = document.createElement('button');
     debugBtn.className = 'toggle-btn';
     debugBtn.textContent = '🐛 Debug';
@@ -901,7 +943,6 @@ document.addEventListener('DOMContentLoaded', function() {
     
     initCharts();
     
-    // Initial load
     setTimeout(() => {
         loadData();
     }, 500);

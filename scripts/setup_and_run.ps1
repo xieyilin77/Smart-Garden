@@ -1,5 +1,5 @@
 # ============================================
-# SMART GARDEN MANAGER - SETUP SCRIPT (IMPROVED)
+# SMART GARDEN MANAGER - SETUP SCRIPT (FIXED)
 # ============================================
 # This script sets up AWS IoT Core certificates and policy
 # It does NOT start the simulator automatically
@@ -9,6 +9,9 @@ param(
     [string]$ProjectRoot = $PSScriptRoot
 )
 
+# FIXED: Get the actual project root (parent of scripts folder)
+$ProjectRoot = Split-Path -Parent $PSScriptRoot
+
 # Fix encoding for PowerShell
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
@@ -17,8 +20,8 @@ Write-Host "=====================================" -ForegroundColor Cyan
 Write-Host "Smart Garden - Setup" -ForegroundColor Cyan
 Write-Host "=====================================" -ForegroundColor Cyan
 
-# Use relative paths
-$CertDir = Join-Path $ProjectRoot "certs"
+# FIXED: Use the correct path for certificates (src/simulator/certs/)
+$CertDir = Join-Path $ProjectRoot "src\simulator\certs"
 $PolicyFile = Join-Path $ProjectRoot "iot-policy.json"
 
 # Check AWS CLI
@@ -36,7 +39,8 @@ if (-not $Region) {
 Write-Host "Configuration:" -ForegroundColor Cyan
 Write-Host "   Account: $AccountId" -ForegroundColor Gray
 Write-Host "   Region: $Region" -ForegroundColor Gray
-Write-Host "   Project: $ProjectRoot" -ForegroundColor Gray
+Write-Host "   Project Root: $ProjectRoot" -ForegroundColor Gray
+Write-Host "   Cert Dir: $CertDir" -ForegroundColor Gray
 Write-Host ""
 
 # ============================================
@@ -44,8 +48,10 @@ Write-Host ""
 # ============================================
 Write-Host "Step 1: Creating certificates..." -ForegroundColor Yellow
 
+# Create certificate directory if it doesn't exist
 if (-not (Test-Path $CertDir)) {
     New-Item -ItemType Directory -Path $CertDir -Force | Out-Null
+    Write-Host "   Created certificate directory: $CertDir" -ForegroundColor Green
 }
 
 # Check if certificates already exist
@@ -94,11 +100,12 @@ if ($existingCerts) {
     Write-Host "   OK: Certificates created: $CertArn" -ForegroundColor Green
 }
 
-# Download Root CA
+# Download Root CA (save to the correct directory)
 Write-Host "   Downloading Root CA..." -ForegroundColor Gray
-if (-not (Test-Path (Join-Path $CertDir "root-CA.crt"))) {
-    Invoke-WebRequest -Uri "https://www.amazontrust.com/repository/AmazonRootCA1.pem" -OutFile (Join-Path $CertDir "root-CA.crt")
-    Write-Host "   OK: Root CA downloaded" -ForegroundColor Green
+$rootCaPath = Join-Path $CertDir "root-CA.crt"
+if (-not (Test-Path $rootCaPath)) {
+    Invoke-WebRequest -Uri "https://www.amazontrust.com/repository/AmazonRootCA1.pem" -OutFile $rootCaPath
+    Write-Host "   OK: Root CA downloaded to $rootCaPath" -ForegroundColor Green
 } else {
     Write-Host "   OK: Root CA already exists" -ForegroundColor Green
 }
@@ -178,40 +185,118 @@ Write-Host "Step 4: Generating .env file..." -ForegroundColor Yellow
 # Use the Python script for better .env generation
 $EnvScript = Join-Path $ProjectRoot "scripts/generate_env.py"
 if (Test-Path $EnvScript) {
+    Write-Host "   Running generate_env.py..." -ForegroundColor Gray
     python $EnvScript --online
     
     if ($LASTEXITCODE -ne 0) {
         Write-Host "   WARNING: Python script failed. Creating basic .env..." -ForegroundColor Yellow
         
-        # Fallback: Create basic .env
+        # Fallback: Create basic .env with correct paths
         $IotEndpoint = aws iot describe-endpoint --endpoint-type iot:Data-ATS --region $Region --query endpointAddress --output text 2>$null
         if (-not $IotEndpoint) {
             $IotEndpoint = "YOUR_IOT_ENDPOINT.iot.$Region.amazonaws.com"
         }
         
+        # FIXED: Use correct paths for src/simulator/certs/
         $EnvContent = @"
 # Smart Garden Configuration
+# ============================================
+# AWS IoT Core Configuration
 AWS_IOT_ENDPOINT=$IotEndpoint
 AWS_IOT_TOPIC=sensor/data
+IOT_THING_NAME=smart-garden-sensor
+
+# Sensor Configuration
 SENSOR_ID=sensor-001
 SENSOR_LOCATION=indoor
 SENSOR_INTERVAL=5
-CERT_PATH=./certs/device-certificate.pem.crt
-PRIVATE_KEY_PATH=./certs/device-private-key.pem.key
-ROOT_CA_PATH=./certs/root-CA.crt
+
+# Certificate Paths (relative to project root)
+CERT_PATH=./src/simulator/certs/device-certificate.pem.crt
+PRIVATE_KEY_PATH=./src/simulator/certs/device-private-key.pem.key
+ROOT_CA_PATH=./src/simulator/certs/root-CA.crt
+
+# Logging
 LOG_LEVEL=INFO
+DEBUG=false
 "@
         $EnvPath = Join-Path $ProjectRoot ".env"
         [System.IO.File]::WriteAllText($EnvPath, $EnvContent, $Utf8NoBom)
-        Write-Host "   OK: Basic .env created" -ForegroundColor Green
+        Write-Host "   OK: Basic .env created at $EnvPath" -ForegroundColor Green
     }
 } else {
-    Write-Host "   WARNING: generate_env.py not found. Skipping .env generation." -ForegroundColor Yellow
+    Write-Host "   WARNING: generate_env.py not found. Creating basic .env..." -ForegroundColor Yellow
+    
+    # Fallback: Create basic .env
+    $IotEndpoint = aws iot describe-endpoint --endpoint-type iot:Data-ATS --region $Region --query endpointAddress --output text 2>$null
+    if (-not $IotEndpoint) {
+        $IotEndpoint = "YOUR_IOT_ENDPOINT.iot.$Region.amazonaws.com"
+    }
+    
+    $EnvContent = @"
+# Smart Garden Configuration
+# ============================================
+# AWS IoT Core Configuration
+AWS_IOT_ENDPOINT=$IotEndpoint
+AWS_IOT_TOPIC=sensor/data
+IOT_THING_NAME=smart-garden-sensor
+
+# Sensor Configuration
+SENSOR_ID=sensor-001
+SENSOR_LOCATION=indoor
+SENSOR_INTERVAL=5
+
+# Certificate Paths (relative to project root)
+CERT_PATH=./src/simulator/certs/device-certificate.pem.crt
+PRIVATE_KEY_PATH=./src/simulator/certs/device-private-key.pem.key
+ROOT_CA_PATH=./src/simulator/certs/root-CA.crt
+
+# Logging
+LOG_LEVEL=INFO
+DEBUG=false
+"@
+    $EnvPath = Join-Path $ProjectRoot ".env"
+    [System.IO.File]::WriteAllText($EnvPath, $EnvContent, $Utf8NoBom)
+    Write-Host "   OK: Basic .env created at $EnvPath" -ForegroundColor Green
 }
 Write-Host ""
 
 # ============================================
-# STEP 5: SUMMARY
+# STEP 5: VERIFY FILES
+# ============================================
+Write-Host "Step 5: Verifying files..." -ForegroundColor Yellow
+
+# Check certificates
+$certFiles = @(
+    "device-certificate.pem.crt",
+    "device-private-key.pem.key",
+    "root-CA.crt"
+)
+
+$allFound = $true
+foreach ($file in $certFiles) {
+    $filePath = Join-Path $CertDir $file
+    if (Test-Path $filePath) {
+        Write-Host "   OK: $file found" -ForegroundColor Green
+    } else {
+        Write-Host "   MISSING: $file" -ForegroundColor Red
+        $allFound = $false
+    }
+}
+
+# Check .env file
+$envPath = Join-Path $ProjectRoot ".env"
+if (Test-Path $envPath) {
+    Write-Host "   OK: .env file found at $envPath" -ForegroundColor Green
+} else {
+    Write-Host "   MISSING: .env file at $envPath" -ForegroundColor Red
+    $allFound = $false
+}
+
+Write-Host ""
+
+# ============================================
+# STEP 6: SUMMARY
 # ============================================
 Write-Host "=====================================" -ForegroundColor Cyan
 Write-Host "Setup Complete!" -ForegroundColor Green
@@ -223,7 +308,18 @@ Write-Host "   IoT Policy: smart-garden-iot-policy" -ForegroundColor Gray
 Write-Host "   .env file: $(Join-Path $ProjectRoot ".env")" -ForegroundColor Gray
 Write-Host ""
 Write-Host "Next Steps:" -ForegroundColor Yellow
-Write-Host "   1. Start the simulator: cd src\simulator; python sensor_simulator.py --env" -ForegroundColor Gray
-Write-Host "   2. Or offline: python sensor_simulator.py --offline" -ForegroundColor Gray
-Write-Host "   3. Open dashboard: start src\dashboard\index.html" -ForegroundColor Gray
+Write-Host "   1. Start MQTT simulator:" -ForegroundColor White
+Write-Host "      cd src\simulator" -ForegroundColor Gray
+Write-Host "      python sensor_simulator.py --mqtt --env --interval 60" -ForegroundColor Gray
+Write-Host ""
+Write-Host "   2. Start API simulator:" -ForegroundColor White
+Write-Host "      cd src\simulator" -ForegroundColor Gray
+Write-Host "      python sensor_simulator.py --api --env --interval 60" -ForegroundColor Gray
+Write-Host ""
+Write-Host "   3. Start offline simulator:" -ForegroundColor White
+Write-Host "      cd src\simulator" -ForegroundColor Gray
+Write-Host "      python sensor_simulator.py --offline --interval 60" -ForegroundColor Gray
+Write-Host ""
+Write-Host "   4. Open dashboard:" -ForegroundColor White
+Write-Host "      start src\dashboard\index.html" -ForegroundColor Gray
 Write-Host "=====================================" -ForegroundColor Cyan

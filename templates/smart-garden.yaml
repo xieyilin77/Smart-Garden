@@ -1,6 +1,37 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: 'Smart Garden Manager - Serverless IoT Platform (Free Tier Optimized with SNS & CloudFront)'
 
+# ============================================================
+# SMART GARDEN MANAGER - LOGICAL ARCHITECTURE
+# ============================================================
+#
+# Layer 1 - Ingestion:
+#   Sensor Simulator -> API Gateway OR AWS IoT Core/MQTT
+#
+# Layer 2 - Storage:
+#   DynamoDB (history/latest) + S3 (data/dashboard)
+#
+# Layer 3 - Processing:
+#   Process Lambda + Query Lambda + SNS
+#
+# Layer 4 - API:
+#   API Gateway -> Process Lambda (POST) / Query Lambda (GET)
+#
+# Layer 5 - Presentation:
+#   S3 Dashboard + optional CloudFront
+#
+# Cross-cutting:
+#   IAM = permissions/security
+#   CloudWatch = logs, metrics, alarms and dashboard
+#
+# Infrastructure:
+#   CloudFormation defines and deploys all AWS resources.
+#
+# IMPORTANT:
+#   The layers are a logical architecture. The resources remain in
+#   one CloudFormation template so existing dependencies are preserved.
+# ============================================================
+
 # ============================================
 # PARAMETERS
 # ============================================
@@ -40,7 +71,7 @@ Parameters:
 
   EnableCloudFront:
     Type: String
-    Default: 'true'
+    Default: 'false'
     Description: Enable CloudFront distribution (true/false)
     AllowedValues:
       - 'true'
@@ -94,6 +125,7 @@ Parameters:
 Conditions:
   EnableEmailNotifications: !Equals [!Ref EnableEmailNotifications, 'true']
   EnableCloudFront: !Equals [!Ref EnableCloudFront, 'true']
+  DisableCloudFront: !Equals [!Ref EnableCloudFront, 'false']
   EnableCloudWatchAlarms: !Equals [!Ref EnableCloudWatchAlarms, 'true']
 
 # ============================================
@@ -102,7 +134,7 @@ Conditions:
 Resources:
 
   # ============================================
-  # S3 DATA BUCKET
+  # LAYER 2 - STORAGE | S3 DATA BUCKET
   # ============================================
   DataBucket:
     Type: AWS::S3::Bucket
@@ -130,7 +162,7 @@ Resources:
         RestrictPublicBuckets: true
 
   # ============================================
-  # S3 WEBSITE BUCKET
+  # LAYER 5 - PRESENTATION | S3 WEBSITE BUCKET
   # ============================================
   WebsiteBucket:
     Type: AWS::S3::Bucket
@@ -144,13 +176,16 @@ Resources:
         IndexDocument: index.html
         ErrorDocument: error.html
       PublicAccessBlockConfiguration:
-        BlockPublicAcls: false
-        BlockPublicPolicy: false
-        IgnorePublicAcls: false
-        RestrictPublicBuckets: false
+        BlockPublicAcls: !If [EnableCloudFront, true, false]
+        BlockPublicPolicy: !If [EnableCloudFront, true, false]
+        IgnorePublicAcls: !If [EnableCloudFront, true, false]
+        RestrictPublicBuckets: !If [EnableCloudFront, true, false]
 
+  # Public website access is used only when CloudFront is disabled.
+  # When CloudFront is enabled, access is restricted to the CloudFront OAI.
   WebsiteBucketPolicy:
     Type: AWS::S3::BucketPolicy
+    Condition: DisableCloudFront
     Properties:
       Bucket: !Ref WebsiteBucket
       PolicyDocument:
@@ -161,8 +196,22 @@ Resources:
             Action: s3:GetObject
             Resource: !Sub '${WebsiteBucket.Arn}/*'
 
+  CloudFrontWebsiteBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Condition: EnableCloudFront
+    Properties:
+      Bucket: !Ref WebsiteBucket
+      PolicyDocument:
+        Statement:
+          - Sid: AllowCloudFrontOAIRead
+            Effect: Allow
+            Principal:
+              CanonicalUser: !GetAtt CloudFrontOriginAccessIdentity.S3CanonicalUserId
+            Action: s3:GetObject
+            Resource: !Sub '${WebsiteBucket.Arn}/*'
+
   # ============================================
-  # CLOUDFRONT ORIGIN ACCESS IDENTITY (NEW - IMPROVED SECURITY)
+  # LAYER 5 - PRESENTATION | CLOUDFRONT ORIGIN ACCESS IDENTITY
   # ============================================
   CloudFrontOriginAccessIdentity:
     Type: AWS::CloudFront::CloudFrontOriginAccessIdentity
@@ -172,7 +221,7 @@ Resources:
         Comment: !Sub 'OAI for ${EnvironmentName} website bucket'
 
   # ============================================
-  # S3 BUCKET POLICIES
+  # LAYER 2 - STORAGE | S3 BUCKET POLICIES
   # ============================================
   DataBucketPolicy:
     Type: AWS::S3::BucketPolicy
@@ -193,7 +242,7 @@ Resources:
               - !Sub '${DataBucket.Arn}/*'
 
   # ============================================
-  # IAM ROLE - Lambda Execution
+  # CROSS-CUTTING - SECURITY | IAM ROLE - Lambda Execution
   # ============================================
   LambdaExecutionRole:
     Type: AWS::IAM::Role
@@ -275,7 +324,7 @@ Resources:
                 Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/*'
 
   # ============================================
-  # IAM ROLE - IoT Topic Rule
+  # CROSS-CUTTING - SECURITY | IAM ROLE - IoT Topic Rule
   # ============================================
   IoTTopicRuleRole:
     Type: AWS::IAM::Role
@@ -306,8 +355,9 @@ Resources:
                 Resource: !GetAtt ProcessDataFunction.Arn
 
   # ============================================
-  # DYNAMODB TABLES
+  # LAYER 2 - STORAGE | DYNAMODB TABLES
   # ============================================
+  # Historical sensor readings.
   SensorDataTable:
     Type: AWS::DynamoDB::Table
     Properties:
@@ -339,6 +389,7 @@ Resources:
       PointInTimeRecoverySpecification:
         PointInTimeRecoveryEnabled: true
 
+  # Current/latest state for each sensor.
   SensorLatestTable:
     Type: AWS::DynamoDB::Table
     Properties:
@@ -356,7 +407,7 @@ Resources:
         PointInTimeRecoveryEnabled: true
 
   # ============================================
-  # AWS IOT CORE
+  # LAYER 1 - INGESTION | AWS IOT CORE
   # ============================================
   IoTThing:
     Type: AWS::IoT::Thing
@@ -383,6 +434,8 @@ Resources:
             Action: iot:Receive
             Resource: !Sub 'arn:aws:iot:${AWS::Region}:${AWS::AccountId}:topic/sensor/data'
 
+  # LAYER 1 -> LAYER 3:
+  # MQTT message on sensor/data -> IoT Rule -> Process Lambda.
   IoTTopicRule:
     Type: AWS::IoT::TopicRule
     Properties:
@@ -399,7 +452,7 @@ Resources:
             RoleArn: !GetAtt IoTTopicRuleRole.Arn
 
   # ============================================
-  # LAMBDA FUNCTIONS
+  # LAYER 3 - PROCESSING | LAMBDA FUNCTIONS
   # ============================================
   ProcessDataFunction:
     Type: AWS::Lambda::Function
@@ -476,7 +529,7 @@ Resources:
       Endpoint: !Ref EmailAddress
 
   # ============================================
-  # API GATEWAY
+  # LAYER 4 - API | API GATEWAY
   # ============================================
   SensorAPI:
     Type: AWS::ApiGateway::RestApi
@@ -519,6 +572,7 @@ Resources:
             method.response.header.Access-Control-Allow-Methods: true
             method.response.header.Access-Control-Allow-Origin: true
 
+  # LAYER 4: Dashboard reads data through GET /data -> Query Lambda.
   SensorAPIGetMethod:
     Type: AWS::ApiGateway::Method
     Properties:
@@ -533,6 +587,7 @@ Resources:
       MethodResponses:
         - StatusCode: 200
 
+  # LAYER 1/4: Sensor Simulator can send HTTPS POST /data -> Process Lambda.
   SensorAPIPostMethod:
     Type: AWS::ApiGateway::Method
     Properties:
@@ -574,7 +629,7 @@ Resources:
       SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${SensorAPI}/*/POST/data'
 
   # ============================================
-  # CLOUDFRONT DISTRIBUTION (IMPROVED WITH OAI)
+  # LAYER 5 - PRESENTATION | CLOUDFRONT DISTRIBUTION
   # ============================================
   CloudFrontDistribution:
     Type: AWS::CloudFront::Distribution
@@ -664,7 +719,7 @@ Resources:
           CloudFrontDefaultCertificate: true
 
   # ============================================
-  # CLOUDWATCH ALARMS (OPTIONAL - FREE TIER)
+  # CROSS-CUTTING - MONITORING | CLOUDWATCH ALARMS (OPTIONAL - FREE TIER)
   # ============================================
   LambdaErrorAlarm:
     Type: AWS::CloudWatch::Alarm
@@ -721,7 +776,7 @@ Resources:
         - !Ref AlertTopic
 
   # ============================================
-  # CLOUDWATCH DASHBOARD (OPTIONAL)
+  # CROSS-CUTTING - MONITORING | CLOUDWATCH DASHBOARD (OPTIONAL)
   # ============================================
   CloudWatchDashboard:
     Type: AWS::CloudWatch::Dashboard
@@ -786,8 +841,10 @@ Resources:
         }
 
 # ============================================
-# OUTPUTS
+# APPLICATION OUTPUTS
 # ============================================
+#
+# These outputs are consumed by deployment scripts and the dashboard.
 Outputs:
   WebsiteURL:
     Description: URL for the web dashboard

@@ -170,11 +170,14 @@ def get_cloudformation_outputs(stack_name: str = STACK_NAME) -> Dict[str, str]:
 def get_iot_endpoint() -> Optional[str]:
     """
     Fetch AWS IoT Core endpoint using AWS CLI
+    Uses the correct Data-ATS endpoint type (modern certificates)
     
     Returns:
         IoT endpoint address or None if not found
     """
     try:
+        # FIXED: Use the correct Data-ATS endpoint type
+        # This returns the modern endpoint format: xxxxx-ats.iot.region.amazonaws.com
         result = subprocess.run(
             [
                 "aws", "iot", "describe-endpoint",
@@ -189,11 +192,14 @@ def get_iot_endpoint() -> Optional[str]:
         )
         endpoint = result.stdout.strip()
         if endpoint and endpoint != "None":
+            print_color(f"   [DEBUG] Retrieved IoT endpoint: {endpoint}", Colors.GRAY)
             return endpoint
         return None
-    except subprocess.CalledProcessError:
+    except subprocess.CalledProcessError as e:
+        print_color(f"   [DEBUG] Failed to get IoT endpoint: {e.stderr}", Colors.GRAY)
         return None
-    except Exception:
+    except Exception as e:
+        print_color(f"   [DEBUG] Exception getting IoT endpoint: {e}", Colors.GRAY)
         return None
 
 def get_account_id() -> Optional[str]:
@@ -294,13 +300,13 @@ def find_certificates(base_path: Path) -> Dict[str, str]:
         "*.pem"
     ]
     
-    # Common certificate directories
+    # Certificate directories in order of preference
     cert_dirs = [
-        base_path / "certs",
-        base_path / "src" / "simulator" / "certs",
-        base_path / "src" / "certs",
-        base_path / "certificates",
-        base_path / "src" / "simulator" / "certificates"
+        base_path / "src" / "simulator" / "certs",      # ✅ Primary location
+        base_path / "certs",                            # ✅ Fallback (legacy)
+        base_path / "src" / "certs",                    # ✅ Fallback
+        base_path / "certificates",                     # ✅ Fallback
+        base_path / "src" / "simulator" / "certificates" # ✅ Fallback
     ]
     
     found = {
@@ -402,13 +408,22 @@ def generate_env(
         if cf_outputs:
             print_color(f"[CloudFormation] Loaded {len(cf_outputs)} outputs", Colors.GREEN)
             
-            # IoT Core configuration
+            # ============================================
+            # FIXED: IoT Core configuration - ALWAYS fetch directly from AWS
+            # ============================================
             if use_iot_core:
-                iot_endpoint = cf_outputs.get("IoTEndpoint") or get_iot_endpoint()
+                # FIXED: Always get IoT endpoint directly from AWS
+                # The CloudFormation output may be incorrect
+                print_color("   [DEBUG] Fetching IoT endpoint directly from AWS...", Colors.GRAY)
+                iot_endpoint = get_iot_endpoint()
+                
                 if iot_endpoint:
                     env_vars["AWS_IOT_ENDPOINT"] = iot_endpoint
                     env_vars["IOT_THING_NAME"] = cf_outputs.get("IoTThingName", "smart-garden-sensor")
-                    print_color(f"   IoT Endpoint: {iot_endpoint}", Colors.GRAY)
+                    print_color(f"   IoT Endpoint: {iot_endpoint}", Colors.GREEN)
+                else:
+                    print_color("   [WARNING] Could not retrieve IoT endpoint", Colors.YELLOW)
+                    print_color("   Please set AWS_IOT_ENDPOINT manually in .env", Colors.YELLOW)
             
             # API Gateway configuration
             if use_api_gateway:
@@ -444,12 +459,23 @@ def generate_env(
                 env_vars["CLOUDFRONT_URL"] = cloudfront_url
             
         else:
+            # Fallback: Try to get IoT endpoint directly
+            if use_iot_core and not env_vars.get("AWS_IOT_ENDPOINT"):
+                print_color("   [DEBUG] CloudFormation not found, fetching IoT endpoint directly...", Colors.GRAY)
+                iot_endpoint = get_iot_endpoint()
+                if iot_endpoint:
+                    env_vars["AWS_IOT_ENDPOINT"] = iot_endpoint
+                    print_color(f"   Auto-discovered IoT Endpoint: {iot_endpoint}", Colors.GREEN)
+                else:
+                    print_color("   [WARNING] Could not auto-discover IoT endpoint", Colors.YELLOW)
+                    print_color("   Please set AWS_IOT_ENDPOINT manually in .env", Colors.YELLOW)
+            
             # Fallback: Manual input in interactive mode
             if mode == "interactive":
                 print_color("[WARNING] CloudFormation stack not found. Please enter manually:", Colors.YELLOW)
                 
                 if use_iot_core:
-                    endpoint = input("  IoT Endpoint (e.g., a1b2c3d4e5f6-ats.iot.region.amazonaws.com): ")
+                    endpoint = input("  IoT Endpoint (e.g., xxxxx-ats.iot.region.amazonaws.com): ")
                     if endpoint:
                         env_vars["AWS_IOT_ENDPOINT"] = endpoint
                 
@@ -457,13 +483,6 @@ def generate_env(
                     api = input("  API Gateway URL (e.g., https://xxx.execute-api.region.amazonaws.com/prod/data): ")
                     if api:
                         env_vars["API_URL"] = api
-            
-            # Try to get IoT endpoint separately
-            if use_iot_core and not env_vars.get("AWS_IOT_ENDPOINT"):
-                iot_endpoint = get_iot_endpoint()
-                if iot_endpoint:
-                    env_vars["AWS_IOT_ENDPOINT"] = iot_endpoint
-                    print_color(f"   Auto-discovered IoT Endpoint: {iot_endpoint}", Colors.GRAY)
     
     # ============================================
     # 2. Sensor Configuration
@@ -488,11 +507,23 @@ def generate_env(
         print(f"   Root CA: {Path(certs['ca']).name}")
         print(f"   Directory: {certs['dir']}")
         
-        # Use absolute paths for better compatibility
-        env_vars["CERT_PATH"] = str(Path(certs["cert"]).absolute())
-        env_vars["PRIVATE_KEY_PATH"] = str(Path(certs["key"]).absolute())
-        env_vars["ROOT_CA_PATH"] = str(Path(certs["ca"]).absolute())
-        env_vars["CERT_DIR"] = str(Path(certs["dir"]).absolute())
+        # Use relative paths from project root for portability
+        try:
+            # Get relative paths from project root
+            cert_rel = str(Path(certs["cert"]).relative_to(PROJECT_ROOT)).replace('\\', '/')
+            key_rel = str(Path(certs["key"]).relative_to(PROJECT_ROOT)).replace('\\', '/')
+            ca_rel = str(Path(certs["ca"]).relative_to(PROJECT_ROOT)).replace('\\', '/')
+            
+            env_vars["CERT_PATH"] = f"./{cert_rel}"
+            env_vars["PRIVATE_KEY_PATH"] = f"./{key_rel}"
+            env_vars["ROOT_CA_PATH"] = f"./{ca_rel}"
+            env_vars["CERT_DIR"] = str(Path(certs["dir"]).absolute())
+        except ValueError:
+            # Fallback to absolute paths if relative fails
+            env_vars["CERT_PATH"] = str(Path(certs["cert"]).absolute())
+            env_vars["PRIVATE_KEY_PATH"] = str(Path(certs["key"]).absolute())
+            env_vars["ROOT_CA_PATH"] = str(Path(certs["ca"]).absolute())
+            env_vars["CERT_DIR"] = str(Path(certs["dir"]).absolute())
     else:
         print_color("[WARNING] Not all certificates found. Using default paths.", Colors.YELLOW)
         if not certs["cert"]:
@@ -502,7 +533,7 @@ def generate_env(
         if not certs["ca"]:
             print_color("   Missing: Root CA certificate", Colors.RED)
         
-        # Use relative paths as fallback
+        # Use correct default paths (src/simulator/certs/)
         env_vars.update({
             "CERT_PATH": "./src/simulator/certs/device-certificate.pem.crt",
             "PRIVATE_KEY_PATH": "./src/simulator/certs/device-private-key.pem.key",
@@ -620,11 +651,14 @@ def write_env_file(env_vars: Dict[str, str], path: Path = None, format_type: str
 # OFFLINE TESTING:
 #    python src/simulator/sensor_simulator.py --offline
 #
-# ONLINE with AWS IoT Core:
-#    python src/simulator/sensor_simulator.py --env
+# ONLINE with AWS IoT Core (MQTT):
+#    python src/simulator/sensor_simulator.py --mqtt --env
 #
-# ONLINE with WebSocket (Port 443):
-#    python src/simulator/sensor_simulator.py --env --websocket
+# ONLINE with AWS IoT Core (WebSocket):
+#    python src/simulator/sensor_simulator.py --mqtt --env --websocket
+#
+# ONLINE with API Gateway:
+#    python src/simulator/sensor_simulator.py --api --env
 #
 # Dashboard with local API:
 #    python src/simulator/mock_api.py
@@ -762,7 +796,7 @@ def interactive_setup():
     print_color("Included variables:", Colors.YELLOW)
     
     # Show important variables
-    important_keys = ["ENVIRONMENT", "AWS_REGION", "AWS_IOT_ENDPOINT", "API_URL", "SENSOR_ID"]
+    important_keys = ["ENVIRONMENT", "AWS_REGION", "AWS_IOT_ENDPOINT", "API_URL", "SENSOR_ID", "CERT_PATH"]
     for key in important_keys:
         value = env_vars.get(key, "")
         if value:
@@ -770,7 +804,9 @@ def interactive_setup():
     print()
     
     print_color("Next Steps:", Colors.YELLOW)
-    print("   Online Simulator: python src/simulator/sensor_simulator.py --env")
+    print("   MQTT Simulator: python src/simulator/sensor_simulator.py --mqtt --env")
+    print("   MQTT Simulator (WebSocket): python src/simulator/sensor_simulator.py --mqtt --env --websocket")
+    print("   API Simulator: python src/simulator/sensor_simulator.py --api --env")
     print("   Offline Simulator: python src/simulator/sensor_simulator.py --offline")
     print("   Dashboard: start src/dashboard/index.html")
     print("   Deploy: .\\scripts\\deploy.ps1")
@@ -951,7 +987,10 @@ Examples:
     
     print()
     print_color("Next Steps:", Colors.YELLOW)
-    print("   Simulator: python src/simulator/sensor_simulator.py --env")
+    print("   MQTT Simulator: python src/simulator/sensor_simulator.py --mqtt --env")
+    print("   MQTT Simulator (WebSocket): python src/simulator/sensor_simulator.py --mqtt --env --websocket")
+    print("   API Simulator: python src/simulator/sensor_simulator.py --api --env")
+    print("   Offline Simulator: python src/simulator/sensor_simulator.py --offline")
     print("   Dashboard: start src/dashboard/index.html")
 
 if __name__ == "__main__":
