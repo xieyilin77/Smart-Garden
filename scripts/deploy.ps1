@@ -162,7 +162,7 @@ Remove-Item `
     -Force `
     -ErrorAction SilentlyContinue
 
-function Create-LambdaZip {
+function New-LambdaZip {
     param(
         $SourceFile,
         $ZipName
@@ -200,14 +200,14 @@ function Create-LambdaZip {
     return $true
 }
 
-if (-not (Create-LambdaZip `
+if (-not (New-LambdaZip `
     (Join-Path $LambdaDir "process_data.py") `
     "process-data.zip")) {
 
     exit 1
 }
 
-if (-not (Create-LambdaZip `
+if (-not (New-LambdaZip `
     (Join-Path $LambdaDir "query_data.py") `
     "query-data.zip")) {
 
@@ -928,7 +928,7 @@ Write-Host "Verifying config.js upload..." -ForegroundColor Yellow
 # Wait a moment for S3 to propagate
 Start-Sleep -Seconds 2
 
-$configExists = aws s3api head-object `
+aws s3api head-object `
     --bucket $uploadBucket `
     --key "config.js" `
     --region $Region 2>$null
