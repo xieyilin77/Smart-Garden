@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'Smart Garden Manager - Serverless IoT Platform (Free Tier Optimized with SNS & CloudFront)'
+Description: 'Smart Garden Manager - Serverless IoT Platform'
 
 # ============================================================
 # SMART GARDEN MANAGER - LOGICAL ARCHITECTURE
@@ -58,7 +58,7 @@ Parameters:
 
   EmailAddress:
     Type: String
-    Default: your-email@example.com
+    Default: yulong@hotmail.de
     Description: Email address for SNS notifications
 
   EnableEmailNotifications:
@@ -100,24 +100,20 @@ Parameters:
     MaxValue: 1024
     AllowedValues: [128, 256, 512, 1024]
 
-  LambdaReservedConcurrency:
-    Type: Number
-    Default: 0
-    Description: Reserved concurrency for Lambda (0=unlimited, 1-100 reserved)
-    MinValue: 0
-    MaxValue: 100
-
   DataRetentionDays:
     Type: Number
-    Default: 30
+    Default: 7
     Description: Number of days to retain data in S3
     MinValue: 1
     MaxValue: 365
 
-  SensorId:
+  EnableAPI:
     Type: String
-    Default: sensor-001
-    Description: Default sensor ID
+    Default: 'true'
+    Description: Enable API Gateway (true/false). Set to false to save costs when not using the API.
+    AllowedValues:
+      - 'true'
+      - 'false'
 
 # ============================================
 # CONDITIONS
@@ -127,6 +123,7 @@ Conditions:
   EnableCloudFront: !Equals [!Ref EnableCloudFront, 'true']
   DisableCloudFront: !Equals [!Ref EnableCloudFront, 'false']
   EnableCloudWatchAlarms: !Equals [!Ref EnableCloudWatchAlarms, 'true']
+  EnableAPI: !Equals [!Ref EnableAPI, 'true']
 
 # ============================================
 # RESOURCES
@@ -138,6 +135,8 @@ Resources:
   # ============================================
   DataBucket:
     Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       BucketName: !Sub '${S3DataBucketName}-${AWS::AccountId}'
       BucketEncryption:
@@ -166,6 +165,8 @@ Resources:
   # ============================================
   WebsiteBucket:
     Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       BucketName: !Sub '${S3WebsiteBucketName}-${AWS::AccountId}'
       BucketEncryption:
@@ -176,10 +177,10 @@ Resources:
         IndexDocument: index.html
         ErrorDocument: error.html
       PublicAccessBlockConfiguration:
-        BlockPublicAcls: !If [EnableCloudFront, true, false]
-        BlockPublicPolicy: !If [EnableCloudFront, true, false]
-        IgnorePublicAcls: !If [EnableCloudFront, true, false]
-        RestrictPublicBuckets: !If [EnableCloudFront, true, false]
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
 
   # Public website access is used only when CloudFront is disabled.
   # When CloudFront is enabled, access is restricted to the CloudFront OAI.
@@ -195,6 +196,16 @@ Resources:
             Principal: '*'
             Action: s3:GetObject
             Resource: !Sub '${WebsiteBucket.Arn}/*'
+          - Sid: DenyNonHttpsRequests
+            Effect: Deny
+            Principal: '*'
+            Action: s3:*
+            Resource:
+              - !Sub '${WebsiteBucket.Arn}'
+              - !Sub '${WebsiteBucket.Arn}/*'
+            Condition:
+              Bool:
+                aws:SecureTransport: false
 
   CloudFrontWebsiteBucketPolicy:
     Type: AWS::S3::BucketPolicy
@@ -209,6 +220,16 @@ Resources:
               CanonicalUser: !GetAtt CloudFrontOriginAccessIdentity.S3CanonicalUserId
             Action: s3:GetObject
             Resource: !Sub '${WebsiteBucket.Arn}/*'
+          - Sid: DenyNonHttpsRequests
+            Effect: Deny
+            Principal: '*'
+            Action: s3:*
+            Resource:
+              - !Sub '${WebsiteBucket.Arn}'
+              - !Sub '${WebsiteBucket.Arn}/*'
+            Condition:
+              Bool:
+                aws:SecureTransport: false
 
   # ============================================
   # LAYER 5 - PRESENTATION | CLOUDFRONT ORIGIN ACCESS IDENTITY
@@ -240,12 +261,24 @@ Resources:
             Resource:
               - !Sub '${DataBucket.Arn}'
               - !Sub '${DataBucket.Arn}/*'
+          - Sid: DenyNonHttpsRequests
+            Effect: Deny
+            Principal: '*'
+            Action: s3:*
+            Resource:
+              - !Sub '${DataBucket.Arn}'
+              - !Sub '${DataBucket.Arn}/*'
+            Condition:
+              Bool:
+                aws:SecureTransport: false
 
   # ============================================
   # CROSS-CUTTING - SECURITY | IAM ROLE - Lambda Execution
   # ============================================
   LambdaExecutionRole:
     Type: AWS::IAM::Role
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       RoleName: !Sub '${EnvironmentName}-lambda-role'
       AssumeRolePolicyDocument:
@@ -321,13 +354,15 @@ Resources:
                   - logs:PutLogEvents
                   - logs:DescribeLogGroups
                   - logs:DescribeLogStreams
-                Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/*'
+                Resource: !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/*'
 
   # ============================================
   # CROSS-CUTTING - SECURITY | IAM ROLE - IoT Topic Rule
   # ============================================
   IoTTopicRuleRole:
     Type: AWS::IAM::Role
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       RoleName: !Sub '${EnvironmentName}-iot-rule-role'
       AssumeRolePolicyDocument:
@@ -360,6 +395,8 @@ Resources:
   # Historical sensor readings.
   SensorDataTable:
     Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       TableName: !Sub '${EnvironmentName}-sensor-data'
       AttributeDefinitions:
@@ -392,6 +429,8 @@ Resources:
   # Current/latest state for each sensor.
   SensorLatestTable:
     Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       TableName: !Sub '${EnvironmentName}-sensor-latest'
       AttributeDefinitions:
@@ -423,16 +462,16 @@ Resources:
         Statement:
           - Effect: Allow
             Action: iot:Connect
-            Resource: !Sub 'arn:aws:iot:${AWS::Region}:${AWS::AccountId}:client/${EnvironmentName}-*'
+            Resource: !Sub 'arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:client/${EnvironmentName}-*'
           - Effect: Allow
             Action: iot:Publish
-            Resource: !Sub 'arn:aws:iot:${AWS::Region}:${AWS::AccountId}:topic/sensor/data'
+            Resource: !Sub 'arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/sensor/data'
           - Effect: Allow
             Action: iot:Subscribe
-            Resource: !Sub 'arn:aws:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/sensor/data'
+            Resource: !Sub 'arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/sensor/data'
           - Effect: Allow
             Action: iot:Receive
-            Resource: !Sub 'arn:aws:iot:${AWS::Region}:${AWS::AccountId}:topic/sensor/data'
+            Resource: !Sub 'arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/sensor/data'
 
   # LAYER 1 -> LAYER 3:
   # MQTT message on sensor/data -> IoT Rule -> Process Lambda.
@@ -456,6 +495,8 @@ Resources:
   # ============================================
   ProcessDataFunction:
     Type: AWS::Lambda::Function
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       FunctionName: !Sub '${EnvironmentName}-process-data'
       Runtime: python3.12
@@ -480,6 +521,8 @@ Resources:
 
   QueryDataFunction:
     Type: AWS::Lambda::Function
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       FunctionName: !Sub '${EnvironmentName}-query-data'
       Runtime: python3.12
@@ -509,13 +552,15 @@ Resources:
       FunctionName: !Ref ProcessDataFunction
       Action: lambda:InvokeFunction
       Principal: iot.amazonaws.com
-      SourceArn: !Sub 'arn:aws:iot:${AWS::Region}:${AWS::AccountId}:rule/smart_garden_rule'
+      SourceArn: !Sub 'arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:rule/smart_garden_rule'
 
   # ============================================
   # SNS - WITH EMAIL (Free Tier Compatible)
   # ============================================
   AlertTopic:
     Type: AWS::SNS::Topic
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       TopicName: !Sub '${EnvironmentName}-alerts'
       DisplayName: !Sub '${EnvironmentName} Alerts'
@@ -533,6 +578,7 @@ Resources:
   # ============================================
   SensorAPI:
     Type: AWS::ApiGateway::RestApi
+    Condition: EnableAPI
     Properties:
       Name: !Sub '${EnvironmentName}-api'
       Description: API for Smart Garden Manager
@@ -543,6 +589,7 @@ Resources:
 
   SensorAPIResource:
     Type: AWS::ApiGateway::Resource
+    Condition: EnableAPI
     Properties:
       RestApiId: !Ref SensorAPI
       ParentId: !GetAtt SensorAPI.RootResourceId
@@ -550,6 +597,7 @@ Resources:
 
   SensorAPIOptionsMethod:
     Type: AWS::ApiGateway::Method
+    Condition: EnableAPI
     Properties:
       RestApiId: !Ref SensorAPI
       ResourceId: !Ref SensorAPIResource
@@ -575,6 +623,7 @@ Resources:
   # LAYER 4: Dashboard reads data through GET /data -> Query Lambda.
   SensorAPIGetMethod:
     Type: AWS::ApiGateway::Method
+    Condition: EnableAPI
     Properties:
       RestApiId: !Ref SensorAPI
       ResourceId: !Ref SensorAPIResource
@@ -583,13 +632,14 @@ Resources:
       Integration:
         Type: AWS_PROXY
         IntegrationHttpMethod: POST
-        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${QueryDataFunction.Arn}/invocations'
+        Uri: !Sub 'arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${QueryDataFunction.Arn}/invocations'
       MethodResponses:
         - StatusCode: 200
 
   # LAYER 1/4: Sensor Simulator can send HTTPS POST /data -> Process Lambda.
   SensorAPIPostMethod:
     Type: AWS::ApiGateway::Method
+    Condition: EnableAPI
     Properties:
       RestApiId: !Ref SensorAPI
       ResourceId: !Ref SensorAPIResource
@@ -598,12 +648,13 @@ Resources:
       Integration:
         Type: AWS_PROXY
         IntegrationHttpMethod: POST
-        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ProcessDataFunction.Arn}/invocations'
+        Uri: !Sub 'arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ProcessDataFunction.Arn}/invocations'
       MethodResponses:
         - StatusCode: 200
 
   SensorAPIDeployment:
     Type: AWS::ApiGateway::Deployment
+    Condition: EnableAPI
     DependsOn:
       - SensorAPIOptionsMethod
       - SensorAPIGetMethod
@@ -614,19 +665,21 @@ Resources:
 
   QueryLambdaPermission:
     Type: AWS::Lambda::Permission
+    Condition: EnableAPI
     Properties:
       FunctionName: !Ref QueryDataFunction
       Action: lambda:InvokeFunction
       Principal: apigateway.amazonaws.com
-      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${SensorAPI}/*/GET/data'
+      SourceArn: !Sub 'arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${SensorAPI}/*/GET/data'
 
   ProcessLambdaPermission:
     Type: AWS::Lambda::Permission
+    Condition: EnableAPI
     Properties:
       FunctionName: !Ref ProcessDataFunction
       Action: lambda:InvokeFunction
       Principal: apigateway.amazonaws.com
-      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${SensorAPI}/*/POST/data'
+      SourceArn: !Sub 'arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${SensorAPI}/*/POST/data'
 
   # ============================================
   # LAYER 5 - PRESENTATION | CLOUDFRONT DISTRIBUTION
@@ -726,7 +779,7 @@ Resources:
     Condition: EnableCloudWatchAlarms
     Properties:
       AlarmName: !Sub '${EnvironmentName}-lambda-errors'
-      AlarmDescription: Alarm triggered when Lambda has errors'
+      AlarmDescription: 'Alarm triggered when Lambda has errors'
       MetricName: Errors
       Namespace: AWS/Lambda
       Statistic: Sum
@@ -745,7 +798,7 @@ Resources:
     Condition: EnableCloudWatchAlarms
     Properties:
       AlarmName: !Sub '${EnvironmentName}-lambda-errors-query'
-      AlarmDescription: Alarm triggered when Query Lambda has errors'
+      AlarmDescription: 'Alarm triggered when Query Lambda has errors'
       MetricName: Errors
       Namespace: AWS/Lambda
       Statistic: Sum
@@ -764,7 +817,7 @@ Resources:
     Condition: EnableCloudWatchAlarms
     Properties:
       AlarmName: !Sub '${EnvironmentName}-iot-connection'
-      AlarmDescription: Alarm triggered when IoT connection fails
+      AlarmDescription: 'Alarm triggered when IoT connection fails'
       MetricName: Connect.Success
       Namespace: AWS/IoT
       Statistic: Sum
@@ -859,7 +912,11 @@ Outputs:
 
   APIGatewayURL:
     Description: API Gateway endpoint for data queries
-    Value: !Sub 'https://${SensorAPI}.execute-api.${AWS::Region}.amazonaws.com/prod/data'
+    Value: !If
+      - EnableAPI
+      - !Sub 'https://${SensorAPI}.execute-api.${AWS::Region}.amazonaws.com/prod/data'
+      - 'API Gateway is disabled (EnableAPI=false)'
+
 
   IoTTopic:
     Description: IoT topic for sending sensor data

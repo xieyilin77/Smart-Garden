@@ -5,7 +5,8 @@
 param(
     [string]$Email = "",
     [string]$Region = "",
-    [bool]$EnableCloudFront = $false
+    [bool]$EnableCloudFront = $false,
+    [bool]$EnableAPI = $true
 )
 
 Write-Host "=====================================" -ForegroundColor Cyan
@@ -68,6 +69,7 @@ if (-not $Email) {
 # Convert the PowerShell boolean to the string expected by
 # the CloudFormation parameter.
 $CloudFrontParameter = if ($EnableCloudFront) { "true" } else { "false" }
+$EnableAPIParameter = if ($EnableAPI) { "true" } else { "false" }
 
 $STACK_NAME = "smart-garden"
 $ENVIRONMENT_NAME = "smart-garden"
@@ -84,6 +86,7 @@ Write-Host "Account ID: $ACCOUNT_ID" -ForegroundColor Cyan
 Write-Host "Region: $Region" -ForegroundColor Cyan
 Write-Host "Email: $Email" -ForegroundColor Cyan
 Write-Host "CloudFront: $CloudFrontParameter" -ForegroundColor Cyan
+Write-Host "API Gateway: $EnableAPIParameter" -ForegroundColor Cyan
 Write-Host "Stack: $STACK_NAME" -ForegroundColor Cyan
 Write-Host "Data Bucket Base: $DATA_BUCKET_BASE" -ForegroundColor Cyan
 Write-Host "Website Bucket Base: $WEBSITE_BUCKET_BASE" -ForegroundColor Cyan
@@ -460,6 +463,7 @@ if (-not $stackExists) {
             ParameterKey=EnableEmailNotifications,ParameterValue=true `
             ParameterKey=EnableCloudFront,ParameterValue=$CloudFrontParameter `
             ParameterKey=EnableCloudWatchAlarms,ParameterValue=true `
+            ParameterKey=EnableAPI,ParameterValue=$EnableAPIParameter `
         --capabilities CAPABILITY_NAMED_IAM `
         --region $Region
 
@@ -503,6 +507,7 @@ else {
             ParameterKey=EnableEmailNotifications,ParameterValue=true `
             ParameterKey=EnableCloudFront,ParameterValue=$CloudFrontParameter `
             ParameterKey=EnableCloudWatchAlarms,ParameterValue=true `
+            ParameterKey=EnableAPI,ParameterValue=$EnableAPIParameter `
         --capabilities CAPABILITY_NAMED_IAM `
         --region $Region
 
