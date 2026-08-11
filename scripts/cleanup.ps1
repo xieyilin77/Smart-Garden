@@ -145,7 +145,7 @@ foreach ($bucket in $buckets) {
     
     # 1. Check if bucket exists
     Write-Host "  Checking if bucket exists..." -ForegroundColor Gray
-    $bucketExists = aws s3api head-bucket --bucket $bucket --region $Region 2>&1
+    aws s3api head-bucket --bucket $bucket --region $Region 2>&1
     if ($LASTEXITCODE -ne 0) {
         Write-Host "  Bucket does not exist, skipping" -ForegroundColor Yellow
         continue
@@ -447,7 +447,7 @@ Write-Host ""
 Write-Host "Deleting IoT Authorizer..." -ForegroundColor Yellow
 
 $authorizerName = "$StackName-authorizer"
-$authorizerExists = aws iot describe-authorizer --authorizer-name $authorizerName --region $Region 2>&1
+aws iot describe-authorizer --authorizer-name $authorizerName --region $Region 2>&1
 if ($LASTEXITCODE -eq 0) {
     Write-Host "  Deleting IoT authorizer: $authorizerName" -ForegroundColor Gray
     aws iot delete-authorizer --authorizer-name $authorizerName --region $Region 2>&1 | Out-Null
