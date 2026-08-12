@@ -2,13 +2,13 @@
 
 A serverless AWS prototype for collecting, processing, storing, monitoring, and visualising simulated smart-garden sensor data.
 
-The repository contains two data-ingestion paths:
+The repository contains three simulator modes and two AWS data-ingestion paths:
 
 - **API mode:** the sensor simulator sends HTTPS `POST /data` requests to API Gateway.
 - **MQTT mode:** the sensor simulator publishes to AWS IoT Core on `sensor/data`.
 - **Offline mode:** the sensor simulator generates readings locally without contacting AWS.
 
-The AWS backend processes sensor readings with Lambda, stores the latest and historical values in DynamoDB, archives raw readings in S3, and sends SNS notifications when configured thresholds are exceeded. A static web dashboard reads the query API and refreshes automatically.
+The AWS backend processes sensor readings with Lambda, stores the latest and historical values in DynamoDB, archives raw readings in an S3 data bucket, and sends SNS notifications when configured thresholds are exceeded. A static web dashboard reads the query API through API Gateway. The dashboard uses adaptive HTTP polling rather than push-based streaming.
 
 > **Repository-verified scope:** This README describes the code and CloudFormation template contained in this repository. It does not claim that AWS resources are currently deployed or that an AWS account is configured.
 
@@ -59,7 +59,15 @@ DynamoDB Latest + History
 
 ### Dashboard delivery
 
-The dashboard is uploaded to an S3 website bucket by the deployment script.
+The dashboard is uploaded to a dedicated S3 website bucket by the deployment script.
+
+The current deployment uses **three S3 buckets** with different responsibilities:
+
+1. **Data bucket** — stores raw sensor-data archives.
+2. **Website bucket** — stores the dashboard files, including `index.html`, `style.css`, `dashboard.js`, and generated `config.js`.
+3. **Lambda-code bucket** — stores packaged Lambda deployment artifacts used by CloudFormation.
+
+The third bucket is a deployment-artifact bucket, not an application data store.
 
 CloudFormation can optionally create a CloudFront distribution. CloudFront is **disabled by default** in `scripts/deploy.ps1` and can be enabled with `-EnableCloudFront $true`.
 
@@ -89,6 +97,7 @@ It defines the main application resources used by the project, including:
   - historical-data table
 - S3 data bucket for raw sensor archives
 - S3 website bucket for the dashboard
+- S3 Lambda-code bucket for deployment artifacts
 - SNS alert topic and optional email subscription
 - CloudWatch alarms and dashboard
 - Optional CloudFront distribution
@@ -973,7 +982,45 @@ The following points are intentionally documented so that the README does not cl
 
 ---
 
-## 26. Project status
+## 26. Presentation summary
+
+For a technical presentation, the core data flow can be explained as:
+
+```text
+Sensor Simulator
+      |
+      +---- HTTPS ----> API Gateway ----+
+      |                                 |
+      +---- MQTT ----> IoT Core -> Rule-+
+                                        |
+                                        v
+                                Process Data Lambda
+                                  /      |       \
+                                 /       |        \
+                                v        v         v
+                         DynamoDB     S3 Data      SNS
+                         latest +     archive     alerts
+                         history
+                                ^
+                                |
+                         Query Data Lambda
+                                ^
+                                |
+                         API Gateway GET /data
+                                ^
+                                |
+                           Dashboard
+```
+
+The infrastructure is defined by CloudFormation. IAM provides permissions,
+CloudWatch provides monitoring, and CloudFront is optional for dashboard
+delivery.
+
+For the S3 architecture, explain the current deployment as **two application
+buckets plus one deployment-artifact bucket**: data archive, dashboard
+website, and Lambda deployment packages.
+
+## 27. Project status
 
 The current implementation provides an end-to-end serverless smart-garden prototype:
 
