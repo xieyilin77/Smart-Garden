@@ -4,13 +4,13 @@ A serverless, event-driven IoT monitoring and analysis platform built with AWS.
 
 The Smart Garden Manager simulates environmental sensor data such as temperature, humidity, soil moisture, battery level, sensor ID, location, and timestamp.
 
-The project supports three official sensor simulation modes:
+The project supports three official simulation modes:
 
-- **Offline** – local testing without AWS
+- **Offline** – local sensor-data generation without AWS
 - **API** – HTTPS ingestion through Amazon API Gateway
-- **MQTT** – secure MQTT ingestion through AWS IoT Core
+- **MQTT** – MQTT ingestion through AWS IoT Core
 
-Both online ingestion paths use the same processing Lambda. Sensor data is validated, processed and stored in Amazon DynamoDB and Amazon S3. Amazon SNS can send threshold alerts, while a web dashboard retrieves and visualizes current and historical sensor data.
+Both online ingestion paths use the same processing Lambda. Sensor data is validated, processed and stored in Amazon DynamoDB and Amazon S3. Amazon SNS provides threshold notifications, while a web dashboard retrieves and visualizes current and historical sensor data.
 
 The AWS infrastructure is deployed as Infrastructure as Code (IaC) using AWS CloudFormation.
 
@@ -18,18 +18,18 @@ The AWS infrastructure is deployed as Infrastructure as Code (IaC) using AWS Clo
 
 # 📋 Table of Contents
 
-1. [Project Overview](#1-project-overview)
-2. [Project Structure & File Responsibilities](#2-project-structure--file-responsibilities)
-3. [System Architecture & Data Flow](#3-system-architecture--data-flow)
-4. [AWS Services & Dependencies](#4-aws-services--dependencies)
-5. [Infrastructure as Code with CloudFormation](#5-infrastructure-as-code-with-cloudformation)
-6. [Offline Deployment & Testing](#6-offline-deployment--testing)
-7. [Online Deployment – API Gateway Option](#7-online-deployment--api-gateway-option)
-8. [Online Deployment – IoT Core/MQTT Option](#8-online-deployment--iot-coremqtt-option)
-9. [Security, Monitoring & Cost Optimization](#9-security-monitoring--cost-optimization)
-10. [Troubleshooting, Cleanup & Presentation Questions](#10-troubleshooting-cleanup--presentation-questions)
-11. [Technologies Used](#technologies-used)
-12. [Future Improvements](#future-improvements)
+1. Project Overview
+2. Project Structure & File Responsibilities
+3. System Architecture & Data Flow
+4. AWS Services & Dependencies
+5. Infrastructure as Code with CloudFormation
+6. Offline Deployment & Testing
+7. Online Deployment – API Gateway Option
+8. Online Deployment – IoT Core/MQTT Option
+9. Security, Monitoring & Cost Optimization
+10. Troubleshooting, Cleanup & Presentation Questions
+11. Technologies Used
+12. Future Improvements
 
 ---
 
@@ -41,7 +41,7 @@ The goal of the Smart Garden Manager is to demonstrate how environmental IoT dat
 
 A Python-based sensor simulator replaces physical hardware so that the complete application can be developed and tested locally before connecting it to AWS.
 
-The project demonstrates a complete sensor-data lifecycle:
+The project demonstrates the following sensor-data lifecycle:
 
 ```text
 GENERATE
@@ -69,18 +69,19 @@ ALERT
 - Offline sensor simulation
 - HTTPS sensor-data ingestion through API Gateway
 - MQTT sensor-data ingestion through AWS IoT Core
-- Common Lambda processing layer for both online ingestion paths
+- Common processing Lambda for both online ingestion paths
 - Current sensor-state storage in DynamoDB
 - Historical sensor-data storage in DynamoDB
 - Raw-data archival in S3
+- Local mock API for offline backend testing
 - REST API for dashboard queries
 - Static web dashboard hosted in S3
 - Optional CloudFront distribution
-- SNS threshold alerts
-- CloudWatch logging and monitoring
+- SNS threshold notifications
+- CloudWatch logging, metrics and alarms
 - CloudFormation-based infrastructure deployment
 - PowerShell deployment and cleanup automation
-- Configurable sensor intervals for cost control
+- Configurable sensor intervals for cost optimization
 
 ---
 
@@ -101,7 +102,6 @@ Smart-Garden/
 │   │
 │   ├── simulator/
 │   │   ├── sensor_simulator.py
-│   │   ├── api_simulator.py
 │   │   ├── mock_api.py
 │   │   └── test_connection_websocket.py
 │   │
@@ -125,31 +125,141 @@ Smart-Garden/
 
 ## 2.1 Core Application Files
 
-| File | Responsibility | Main Dependencies |
+| File | Responsibility | Dependencies |
 |---|---|---|
-| `smart-garden.yaml` | Defines the AWS infrastructure | CloudFormation |
-| `process_data.py` | Validates and processes incoming sensor data | DynamoDB, S3, SNS, IAM |
-| `query_data.py` | Retrieves data for the dashboard | DynamoDB, API Gateway, IAM |
-| `sensor_simulator.py` | Official sensor simulator | Python, Requests, AWS IoT SDK |
+| `smart-garden.yaml` | Defines AWS infrastructure | CloudFormation |
+| `process_data.py` | Validates, processes and stores incoming sensor data | DynamoDB, S3, SNS, IAM |
+| `query_data.py` | Retrieves sensor data for the dashboard | DynamoDB, API Gateway, IAM |
+| `sensor_simulator.py` | Official sensor-data generator and transmitter | Python, Requests, AWS IoT SDK |
+| `mock_api.py` | Local backend simulator for offline testing | Flask, Flask-CORS |
 | `index.html` | Dashboard structure | Web browser |
-| `style.css` | Dashboard styling | `index.html` |
+| `style.css` | Dashboard styling | HTML |
 | `dashboard.js` | Dashboard logic and API communication | API Gateway, generated `config.js` |
-| `deploy.ps1` | Builds, deploys and configures the application | AWS CLI, CloudFormation |
+| `deploy.ps1` | Builds, deploys and configures the AWS environment | AWS CLI, CloudFormation |
 | `build.ps1` | Creates deployment artifacts | PowerShell |
 | `test.ps1` | Runs project tests and validation | PowerShell |
 | `cleanup.ps1` | Removes deployed resources | AWS CLI, CloudFormation |
-| `verify-cleanup.ps1` | Verifies cleanup | AWS CLI |
+| `verify-cleanup.ps1` | Verifies resource cleanup | AWS CLI |
 | `generate_env.py` | Generates local environment configuration | Python |
 
-## 2.2 Generated Configuration
+---
 
-### `config.js`
+## 2.2 Official Sensor Simulator
 
-`config.js` is **not a manually maintained source file**.
+The official simulator is:
 
-It is generated automatically by `deploy.ps1` after CloudFormation has created the API Gateway endpoint.
+```text
+src/simulator/sensor_simulator.py
+```
 
-The process is:
+It supports exactly three operating modes:
+
+```text
+--offline
+--api
+--mqtt
+```
+
+Examples:
+
+```powershell
+python sensor_simulator.py --offline --interval 60
+```
+
+```powershell
+python sensor_simulator.py --api --interval 60
+```
+
+```powershell
+python sensor_simulator.py --mqtt --interval 60
+```
+
+Only one mode can be selected at a time.
+
+The default sensor interval is:
+
+```text
+60 seconds
+```
+
+The simulator generates realistic sensor values including:
+
+- Temperature
+- Humidity
+- Soil moisture
+- Battery
+- Sensor ID
+- Location
+- Timestamp
+
+The simulator also supports sensor locations such as:
+
+```text
+indoor
+outdoor
+greenhouse
+```
+
+---
+
+## 2.3 Local Mock API
+
+```text
+src/simulator/mock_api.py
+```
+
+`mock_api.py` is a **local backend testing utility**.
+
+It does not deploy anything to AWS.
+
+Instead, it simulates the behavior of the API Gateway/Lambda backend locally.
+
+The local mock API provides:
+
+```text
+POST /prod/data
+GET  /prod/query
+```
+
+Received data is stored temporarily in memory.
+
+The mock API is useful for:
+
+- Offline backend testing
+- API development
+- Dashboard testing
+- Testing sensor-data processing behavior
+- Testing alert conditions without AWS
+
+It is not part of the deployed AWS architecture.
+
+---
+
+## 2.4 MQTT/WebSocket Test Utility
+
+```text
+src/simulator/test_connection_websocket.py
+```
+
+This is an optional connectivity test utility.
+
+It can be used to test MQTT/WebSocket connectivity separately from the main simulator.
+
+The official MQTT implementation remains:
+
+```text
+sensor_simulator.py
+```
+
+---
+
+## 2.5 Generated Configuration – `config.js`
+
+`config.js` is a generated deployment artifact.
+
+It is not manually maintained as a source file.
+
+The deployment process is:
 
 ```text
 CloudFormation
@@ -163,63 +273,11 @@ config.js
 dashboard.js
 ```
 
-The generated file contains runtime configuration such as the current API Gateway URL.
+The file contains runtime configuration such as the current API Gateway URL.
 
-It should not be manually edited or committed as a permanent source file.
+Do not hard-code the API Gateway URL inside `dashboard.js`.
 
-## 2.3 Legacy and Test Utilities
-
-The following files are **not part of the primary application flow**.
-
-### `api_simulator.py`
-
-**Status: Legacy / Test Utility**
-
-This is an older standalone API Gateway simulator.
-
-It can generate sensor data and send it directly to an API Gateway endpoint.
-
-It is retained for compatibility and additional API testing.
-
-It is **not the official sensor simulator** and should not be used as the primary project entry point.
-
-The official simulator is:
-
-```powershell
-python sensor_simulator.py --api --interval 60
-```
-
-The legacy utility can still be used for isolated API testing:
-
-```powershell
-python api_simulator.py --test
-```
-
-When using this utility, an explicit API URL should preferably be supplied rather than relying on its legacy default configuration.
-
-### `mock_api.py`
-
-**Status: Optional Local Test Utility**
-
-This file can be used to simulate an API locally without connecting to AWS.
-
-It is useful for development and testing of API-related behavior.
-
-It is not part of the deployed AWS architecture.
-
-### `test_connection_websocket.py`
-
-**Status: Optional MQTT/WebSocket Test Utility**
-
-This file is used for testing MQTT/WebSocket connectivity.
-
-It is not required for the standard API or MQTT deployment path.
-
-The primary MQTT implementation is contained in:
-
-```text
-sensor_simulator.py
-```
+Do not commit generated deployment configuration as permanent source code.
 
 ---
 
@@ -228,48 +286,54 @@ sensor_simulator.py
 The application is organized into five logical layers.
 
 ```text
-┌──────────────────────────────────────────────────────────────┐
-│ LAYER 5 – PRESENTATION                                       │
-│ S3 Dashboard + optional CloudFront                           │
-├──────────────────────────────────────────────────────────────┤
-│ LAYER 4 – API                                                 │
-│ API Gateway + Query Lambda                                    │
-├──────────────────────────────────────────────────────────────┤
-│ LAYER 3 – PROCESSING                                          │
-│ Process Lambda + SNS                                          │
-├──────────────────────────────────────────────────────────────┤
-│ LAYER 2 – STORAGE                                             │
-│ DynamoDB + S3                                                 │
-├──────────────────────────────────────────────────────────────┤
-│ LAYER 1 – INGESTION                                           │
-│ Sensor Simulator + API Gateway / IoT Core                    │
-└──────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────┐
+│ Layer 5 – PRESENTATION                       │
+│ S3 Dashboard + optional CloudFront            │
+├──────────────────────────────────────────────┤
+│ Layer 4 – API                                │
+│ API Gateway + Query Lambda                    │
+├──────────────────────────────────────────────┤
+│ Layer 3 – PROCESSING                         │
+│ Process Lambda + SNS                         │
+├──────────────────────────────────────────────┤
+│ Layer 2 – STORAGE                            │
+│ DynamoDB + S3                                │
+├──────────────────────────────────────────────┤
+│ Layer 1 – INGESTION                          │
+│ Sensor Simulator + API Gateway / IoT Core   │
+└──────────────────────────────────────────────┘
 
 Cross-cutting:
 IAM        → Security and permissions
-CloudWatch → Logs, metrics and monitoring
+CloudWatch → Logs, metrics and alarms
 
 Infrastructure:
-CloudFormation → Creates and connects AWS resources
+CloudFormation → Infrastructure as Code
 ```
 
-## 3.1 API Gateway Ingestion
+The five layers are logical architecture layers. They remain inside one CloudFormation template to preserve resource dependencies.
+
+---
+
+## 3.1 API Gateway Data Flow
 
 ```text
 Python Sensor Simulator
         ↓
-HTTPS POST
+HTTPS POST /data
         ↓
 API Gateway
         ↓
 Process Lambda
         ↓
-┌───────┼────────┐
-↓       ↓        ↓
-DynamoDB S3      SNS
+┌──────────┼──────────┐
+↓          ↓          ↓
+DynamoDB   S3         SNS
 ```
 
-## 3.2 IoT Core / MQTT Ingestion
+---
+
+## 3.2 IoT Core / MQTT Data Flow
 
 ```text
 Python Sensor Simulator
@@ -282,10 +346,18 @@ IoT Topic Rule
         ↓
 Process Lambda
         ↓
-┌───────┼────────┐
-↓       ↓        ↓
-DynamoDB S3      SNS
+┌──────────┼──────────┐
+↓          ↓          ↓
+DynamoDB   S3         SNS
 ```
+
+The MQTT topic used by the architecture is:
+
+```text
+sensor/data
+```
+
+---
 
 ## 3.3 Dashboard Data Flow
 
@@ -294,13 +366,13 @@ Browser
    ↓
 CloudFront (optional)
    ↓
-S3 Dashboard
+S3 Website Bucket
    ↓
 dashboard.js
    ↓
 config.js
    ↓
-API Gateway GET
+API Gateway GET /data
    ↓
 Query Lambda
    ↓
@@ -311,53 +383,24 @@ JSON Response
 Dashboard
 ```
 
-## 3.4 Switching Between API and MQTT
-
-The official simulator supports:
-
-```powershell
-python sensor_simulator.py --offline --interval 60
-
-python sensor_simulator.py --api --interval 60
-
-python sensor_simulator.py --mqtt --interval 60
-```
-
-Only one operating mode should be selected at a time.
-
-The important architectural point is that API Gateway and IoT Core use the same processing Lambda:
-
-```text
-                    ┌── API Gateway ──┐
-                    │                 │
-Sensor Simulator ───┤                 ▼
-                    │          Process Lambda
-                    │                 │
-                    └── IoT Core ─────┘
-                                      │
-                         ┌────────────┼────────────┐
-                         ↓            ↓            ↓
-                      DynamoDB       S3           SNS
-```
-
-Changing the ingestion method does not require redesigning the storage or dashboard layers.
-
 ---
 
 # 4. AWS Services & Dependencies
 
-| AWS Service | Role in the Project | Main Connections |
-|---|---|---|
-| AWS IoT Core | Receives MQTT sensor messages | Thing, certificate, policy, IoT Rule |
-| Amazon API Gateway | HTTPS REST API | Lambda |
-| AWS Lambda | Processes and queries sensor data | IAM, DynamoDB, S3, SNS, CloudWatch |
-| Amazon DynamoDB | Stores latest and historical measurements | Lambda |
-| Amazon S3 | Stores raw data and dashboard files | Lambda, dashboard, CloudFront |
-| Amazon SNS | Sends threshold notifications | Process Lambda |
-| Amazon CloudFront | Optional dashboard distribution | S3 |
-| AWS IAM | Controls permissions | Lambda, IoT, S3, CloudFormation |
-| Amazon CloudWatch | Logs, metrics and alarms | Lambda and other AWS services |
-| AWS CloudFormation | Creates and manages infrastructure | All defined AWS resources |
+| AWS Service | Role |
+|---|---|
+| AWS IoT Core | Receives MQTT sensor messages |
+| Amazon API Gateway | Provides HTTPS REST endpoints |
+| AWS Lambda | Processes incoming data and retrieves dashboard data |
+| Amazon DynamoDB | Stores current and historical sensor data |
+| Amazon S3 | Stores archived sensor data and dashboard files |
+| Amazon SNS | Sends sensor threshold notifications |
+| Amazon CloudFront | Optional global distribution of the dashboard |
+| AWS IAM | Controls permissions between AWS services |
+| Amazon CloudWatch | Provides logs, metrics, dashboards and alarms |
+| AWS CloudFormation | Creates and manages the AWS infrastructure |
+
+---
 
 ## 4.1 Main Dependency Chain
 
@@ -367,32 +410,331 @@ Sensor Simulator
       ├──────────────→ API Gateway
       │                     │
       │                     ▼
-      └──────────────→ IoT Core → IoT Rule
+      │              Process Lambda
+      │                     │
+      │              ┌──────┼──────┐
+      │              ↓      ↓      ↓
+      │           DynamoDB S3     SNS
+      │
+      └──────────────→ IoT Core
                             │
                             ▼
-                    Process Lambda
+                       IoT Rule
                             │
-              ┌─────────────┼─────────────┐
-              ↓             ↓             ↓
-           DynamoDB         S3            SNS
-              │
-              ↓
-         Query Lambda
-              │
-              ↓
-         API Gateway
-              │
-              ↓
-          Dashboard
+                            ▼
+                     Process Lambda
 ```
 
-IAM supplies permissions between services.
+For dashboard queries:
 
-CloudWatch provides observability and troubleshooting information.
+```text
+Dashboard
+    ↓
+API Gateway GET
+    ↓
+Query Lambda
+    ↓
+DynamoDB
+    ↓
+JSON
+    ↓
+Dashboard
+```
 
 ---
 
-# 5. Infrastructure as Code with CloudFormation
+# 5. Why Two DynamoDB Tables?
+
+The project uses two functional DynamoDB tables.
+
+## 5.1 Historical Data Table
+
+```text
+smart-garden-sensor-data
+```
+
+Purpose:
+
+- Store historical measurements
+- Support time-series queries
+- Provide data for charts
+- Preserve previous sensor readings
+
+The primary key uses:
+
+```text
+sensor_id
+timestamp
+```
+
+This allows sensor readings to be stored over time.
+
+## 5.2 Latest State Table
+
+```text
+smart-garden-sensor-latest
+```
+
+Purpose:
+
+- Store only the latest value for each sensor
+- Quickly retrieve the current sensor state
+- Avoid scanning historical data for current values
+
+Example:
+
+```text
+sensor-001
+Temperature: 24.5°C
+Humidity: 61%
+Soil Moisture: 48%
+Battery: 93%
+```
+
+## 5.3 Why Separate Them?
+
+The access patterns are different:
+
+```text
+Latest Table
+→ "What is the current value?"
+
+History Table
+→ "What values were recorded over time?"
+```
+
+Separating these responsibilities makes the application easier to query and understand.
+
+---
+
+# 6. Why Two Functional S3 Buckets?
+
+The project uses two functional S3 buckets plus one deployment-artifact bucket.
+
+## 6.1 Sensor Data Bucket
+
+```text
+DataBucket
+```
+
+Purpose:
+
+- Archive raw sensor data
+- Store IoT Rule error objects
+- Preserve sensor-data history outside DynamoDB
+
+The bucket uses encryption, versioning and lifecycle rules.
+
+## 6.2 Website Bucket
+
+```text
+WebsiteBucket
+```
+
+Purpose:
+
+- Store the static dashboard
+- Store HTML, CSS and JavaScript files
+- Serve the web application directly or through CloudFront
+
+## 6.3 Lambda Deployment Bucket
+
+A third S3 bucket is used for deployment artifacts.
+
+Purpose:
+
+```text
+process-data.zip
+query-data.zip
+```
+
+This bucket is a technical deployment dependency rather than an application data store.
+
+Therefore the architecture can be explained as:
+
+```text
+S3 Data Bucket
+→ Sensor data
+
+S3 Website Bucket
+→ Dashboard
+
+S3 Lambda Bucket
+→ Deployment packages
+```
+
+---
+
+# 7. API Gateway vs. AWS IoT Core
+
+The project supports two online ingestion paths.
+
+## 7.1 API Gateway
+
+API Gateway is used for HTTPS/REST communication.
+
+```text
+Sensor Simulator
+      ↓
+HTTPS POST
+      ↓
+API Gateway
+      ↓
+Process Lambda
+```
+
+Advantages:
+
+- Easy to test
+- Simple HTTPS interface
+- Easy PowerShell testing
+- Suitable for REST clients
+
+Example:
+
+```powershell
+python sensor_simulator.py --api --interval 60
+```
+
+---
+
+## 7.2 AWS IoT Core
+
+AWS IoT Core is used for MQTT communication.
+
+```text
+Sensor Simulator
+      ↓
+MQTT
+      ↓
+AWS IoT Core
+      ↓
+IoT Rule
+      ↓
+Process Lambda
+```
+
+Advantages:
+
+- Designed for IoT devices
+- MQTT protocol
+- Certificate-based authentication
+- Topic-based communication
+
+Example:
+
+```powershell
+python sensor_simulator.py --mqtt --interval 60
+```
+
+---
+
+## 7.3 Can the Project Switch Between Them?
+
+Yes.
+
+The processing, storage and dashboard layers remain unchanged.
+
+Only the ingestion path changes:
+
+```text
+API Mode:
+
+Sensor → API Gateway → Process Lambda
+
+
+MQTT Mode:
+
+Sensor → IoT Core → IoT Rule → Process Lambda
+```
+
+Both ultimately use:
+
+```text
+Process Lambda
+       ↓
+DynamoDB
+S3
+SNS
+```
+
+Only one simulator mode should be selected at a time.
+
+---
+
+# 8. Why Process Lambda and Query Lambda Are Separate
+
+The project separates data writing and data reading.
+
+## Process Lambda
+
+```text
+Incoming Sensor Data
+        ↓
+Process Lambda
+        ↓
+Validate
+        ↓
+Store
+        ↓
+DynamoDB
+S3
+SNS
+```
+
+Responsibilities:
+
+- Validate sensor data
+- Process values
+- Update latest sensor state
+- Store historical data
+- Archive raw data
+- Trigger notifications
+
+## Query Lambda
+
+```text
+Dashboard
+    ↓
+API Gateway GET
+    ↓
+Query Lambda
+    ↓
+DynamoDB
+    ↓
+JSON
+```
+
+Responsibilities:
+
+- Retrieve latest sensor values
+- Retrieve historical measurements
+- Prepare dashboard responses
+
+## Why Separate Them?
+
+The separation provides:
+
+- Clear responsibilities
+- Easier testing
+- Easier debugging
+- Independent security permissions
+- Better maintainability
+- Easier future scaling
+
+The architecture follows the principle:
+
+```text
+Process Lambda
+= WRITE / PROCESS
+
+Query Lambda
+= READ / QUERY
+```
+
+---
+
+# 9. Infrastructure as Code with CloudFormation
 
 The main infrastructure template is:
 
@@ -400,9 +742,9 @@ The main infrastructure template is:
 templates/smart-garden.yaml
 ```
 
-CloudFormation creates and connects the AWS resources instead of requiring every resource to be created manually.
+CloudFormation defines the AWS resources and their relationships.
 
-## 5.1 Logical Template Structure
+Logical structure:
 
 ```text
 Parameters
@@ -410,9 +752,9 @@ Parameters
 Conditions
    ↓
 Resources
-   ├── IoT Core
-   ├── DynamoDB
    ├── S3
+   ├── DynamoDB
+   ├── IoT Core
    ├── Lambda
    ├── SNS
    ├── API Gateway
@@ -423,9 +765,7 @@ Resources
 Outputs
 ```
 
-The application is logically divided into five layers, but these layers remain inside one CloudFormation template.
-
-CloudFormation uses resource references such as:
+CloudFormation references such as:
 
 ```yaml
 !Ref
@@ -433,86 +773,41 @@ CloudFormation uses resource references such as:
 !Sub
 ```
 
-to connect resources and resolve dependencies.
-
-## 5.2 CloudFront Control
-
-CloudFront is optional.
-
-Development:
-
-```powershell
-.\deploy.ps1
-```
-
-Final presentation:
-
-```powershell
-.\deploy.ps1 -EnableCloudFront $true
-```
-
-The PowerShell parameter is converted into the CloudFormation parameter used by the infrastructure template.
-
-## 5.3 Automatic API Configuration
-
-The deployment process is:
-
-```text
-CloudFormation
-      ↓
-API Gateway created
-      ↓
-API Gateway URL returned as CloudFormation Output
-      ↓
-deploy.ps1
-      ↓
-config.js generated
-      ↓
-Dashboard uploaded to S3
-```
-
-This avoids permanently hard-coding the API Gateway URL in `dashboard.js`.
+connect resources and resolve dependencies.
 
 ---
 
-# 6. Offline Deployment & Testing
+# 10. Offline Deployment & Testing
 
-Offline mode allows the simulator and dashboard to be tested without AWS.
+Offline mode does not require AWS.
 
-## 6.1 Prerequisites
-
-Recommended local environment:
-
-- Windows 10/11
-- Visual Studio Code
-- Python 3.9+
-- Git
-- AWS CLI for online deployment
-- Internet connection only when AWS services are required
-
-Check:
+## 10.1 Prerequisites
 
 ```powershell
 python --version
-aws --version
-git --version
 ```
 
-## 6.2 Install Simulator Dependencies
-
-From the simulator directory:
+Install simulator dependencies:
 
 ```powershell
-pip install requests AWSIoTPythonSDK
+pip install requests
 ```
 
-Optional:
+For MQTT:
 
 ```powershell
-pip install python-dotenv
+pip install AWSIoTPythonSDK
 ```
 
-## 6.3 Offline Sensor Test
+For local mock API:
+
+```powershell
+pip install flask flask-cors
+```
+
+---
+
+## 10.2 Offline Sensor Test
 
 Navigate to:
 
@@ -520,22 +815,16 @@ Navigate to:
 cd src\simulator
 ```
 
-Quick test:
-
-```powershell
-python sensor_simulator.py --offline --interval 2 --max-readings 3
-```
-
-Normal simulation:
+Run:
 
 ```powershell
 python sensor_simulator.py --offline --interval 60
 ```
 
-Stop with:
+For a quick test:
 
-```text
-CTRL+C
+```powershell
+python sensor_simulator.py --offline --interval 2 --max-readings 3
 ```
 
 Expected behavior:
@@ -545,39 +834,41 @@ Mode: OFFLINE
 Sensor ID: sensor-001
 Interval: 60 seconds
 
-READING 000001
+Reading:
 Temperature: ...
 Humidity: ...
 Soil Moisture: ...
 Battery: ...
 ```
 
-No AWS request should be generated in offline mode.
-
-## 6.4 Offline Dashboard Test
-
-Start a local web server:
-
-```powershell
-cd src\dashboard
-python -m http.server 8000
-```
-
-Open:
-
-```text
-http://localhost:8000
-```
-
-For local mock-data testing, the dashboard can be configured to use mock data.
+No AWS service is required.
 
 ---
 
-# 7. Online Deployment – API Gateway Option
+## 10.3 Local Mock API
 
-Option 1 is recommended for the first AWS integration test because it does not require MQTT certificate configuration.
+Start the mock API:
 
-## 7.1 Configure AWS CLI
+```powershell
+python mock_api.py
+```
+
+The local backend provides:
+
+```text
+POST /prod/data
+GET /prod/query
+```
+
+The mock API stores received data in memory.
+
+It is intended for development and testing and does not create AWS resources.
+
+---
+
+# 11. Online Deployment – API Gateway Option
+
+## 11.1 Configure AWS
 
 ```powershell
 aws configure
@@ -589,15 +880,17 @@ Verify:
 aws sts get-caller-identity
 ```
 
-The deployment examples use:
+The project examples use:
 
 ```text
 us-west-2
 ```
 
-Keep the deployment region consistent.
+Keep the region consistent during deployment.
 
-## 7.2 Deploy AWS Infrastructure
+---
+
+## 11.2 Deploy
 
 Navigate to:
 
@@ -605,42 +898,29 @@ Navigate to:
 cd scripts
 ```
 
-Deploy:
+Run:
 
 ```powershell
 .\deploy.ps1
 ```
 
-With SNS email:
+With email notifications:
 
 ```powershell
 .\deploy.ps1 -Email "your-email@example.com"
 ```
 
-For final presentation with CloudFront:
+With CloudFront:
 
 ```powershell
 .\deploy.ps1 -Email "your-email@example.com" -EnableCloudFront $true
 ```
 
-The deployment script:
+The deployment process creates or updates the CloudFormation stack and configures the application.
 
-1. Checks AWS access
-2. Determines the deployment region
-3. Verifies required project files
-4. Creates Lambda deployment packages
-5. Uploads deployment artifacts
-6. Creates or updates the CloudFormation stack
-7. Reads CloudFormation outputs
-8. Retrieves the API Gateway URL
-9. Generates `config.js`
-10. Uploads dashboard files
-11. Verifies the generated configuration
-12. Displays deployed endpoints
+---
 
-## 7.3 Test API Mode
-
-Navigate to:
+## 11.3 Test API Mode
 
 ```powershell
 cd src\simulator
@@ -652,13 +932,13 @@ Quick test:
 python sensor_simulator.py --api --interval 2 --max-readings 3
 ```
 
-Normal simulation:
+Normal test:
 
 ```powershell
 python sensor_simulator.py --api --interval 60
 ```
 
-If an explicit endpoint is required:
+If necessary, specify the API URL:
 
 ```powershell
 python sensor_simulator.py `
@@ -667,77 +947,27 @@ python sensor_simulator.py `
     --interval 60
 ```
 
-The API URL can also be supplied through:
-
-```powershell
-$env:SMART_GARDEN_API_URL="https://YOUR_API_ID.execute-api.us-west-2.amazonaws.com/prod/data"
-```
-
-## 7.4 Test API Directly
-
-Example:
-
-```powershell
-$body = @{
-    sensor_id = "sensor-001"
-    temperature = 24.5
-    humidity = 61.2
-    soil_moisture = 42.7
-} | ConvertTo-Json
-
-Invoke-RestMethod `
-    -Uri "YOUR_API_GATEWAY_URL" `
-    -Method POST `
-    -ContentType "application/json" `
-    -Body $body
-```
-
-Expected result:
-
-```text
-HTTP 200
-```
-
-Then verify:
-
-1. Process Lambda executed
-2. DynamoDB contains the measurement
-3. S3 contains the raw-data object
-4. SNS generated an alert if a threshold was exceeded
-5. CloudWatch contains Lambda logs
-
 ---
 
-# 8. Online Deployment – IoT Core/MQTT Option
+# 12. Online Deployment – IoT Core / MQTT Option
 
-Option 2 uses AWS IoT Core and MQTT.
+## 12.1 Required Components
 
-## 8.1 Required IoT Components
+MQTT requires:
 
-The MQTT simulator requires:
-
-- IoT Thing
-- X.509 device certificate
+- AWS IoT Thing
+- X.509 certificate
 - Private key
-- Root CA certificate
+- Root CA
 - IoT policy
 - AWS IoT endpoint
 - MQTT topic
 
-Example local certificate structure:
+Never commit certificates or private keys to GitHub.
 
-```text
-src/
-└── simulator/
-    └── certs/
-        ├── device-certificate.pem.crt
-        ├── device-private-key.pem.key
-        └── root-CA.crt
-```
+---
 
-Never commit private keys or certificates to GitHub.
-
-## 8.2 MQTT Data Flow
+## 12.2 MQTT Data Flow
 
 ```text
 Sensor Simulator
@@ -746,7 +976,7 @@ X.509 Certificate
       ↓
 AWS IoT Core
       ↓
-MQTT Topic
+sensor/data
       ↓
 IoT Topic Rule
       ↓
@@ -755,25 +985,9 @@ Process Lambda
 DynamoDB + S3 + SNS
 ```
 
-The MQTT topic must be consistent between:
+---
 
-- simulator
-- IoT policy
-- IoT Rule
-
-## 8.3 MQTT Setup
-
-The project includes:
-
-```text
-scripts/setup_and_run.ps1
-```
-
-This script prepares the MQTT environment, including certificate and policy configuration.
-
-Despite the historical filename, the script is primarily a **setup/configuration utility** and should not be interpreted as the main simulator itself.
-
-After the MQTT configuration is prepared, run:
+## 12.3 MQTT Test
 
 ```powershell
 cd src\simulator
@@ -785,147 +999,176 @@ Quick test:
 python sensor_simulator.py --mqtt --interval 2 --max-readings 3
 ```
 
-Normal simulation:
+Normal test:
 
 ```powershell
 python sensor_simulator.py --mqtt --interval 60
 ```
 
-Explicit certificate paths can be supplied when required:
-
-```powershell
-python sensor_simulator.py `
-    --mqtt `
-    --interval 60 `
-    --cert ".\certs\device-certificate.pem.crt" `
-    --private-key ".\certs\device-private-key.pem.key" `
-    --root-ca ".\certs\root-CA.crt"
-```
-
-If MQTT over WebSocket is supported by the simulator:
+WebSocket mode, when configured:
 
 ```powershell
 python sensor_simulator.py --mqtt --websocket --interval 60
 ```
 
-## 8.4 Switching Between API and MQTT
+---
 
-Yes.
+# 13. Generated `config.js`
 
-The official simulator supports:
+The dashboard does not permanently store the API Gateway URL in the source code.
+
+The deployment process is:
 
 ```text
---offline
---api
---mqtt
+CloudFormation
+      ↓
+API Gateway URL
+      ↓
+deploy.ps1
+      ↓
+config.js
+      ↓
+dashboard.js
 ```
 
-Examples:
+This makes the deployment portable.
 
-```powershell
-python sensor_simulator.py --offline --interval 60
-
-python sensor_simulator.py --api --interval 60
-
-python sensor_simulator.py --mqtt --interval 60
-```
-
-Only one operating mode should be selected at a time.
-
-The ingestion method can be changed without redesigning the processing, storage or dashboard layers.
+If a new stack creates a different API Gateway URL, the generated configuration can be updated automatically.
 
 ---
 
-# 9. Security, Monitoring & Cost Optimization
+# 14. CloudFront – Optional
 
-## 9.1 Security
-
-### IAM
-
-IAM controls what each AWS service is allowed to do.
-
-The project follows the principle of least privilege.
-
-The processing Lambda requires permissions for the AWS resources it actually uses, such as:
+CloudFront is controlled through:
 
 ```text
-dynamodb:PutItem
-s3:PutObject
-sns:Publish
-CloudWatch Logs permissions
+EnableCloudFront
 ```
 
-Administrator permissions should not be required by the application Lambda.
+## Development
 
-### IoT Security
+Keep CloudFront disabled:
 
-MQTT authentication uses X.509 certificates.
+```powershell
+.\deploy.ps1
+```
 
-The IoT policy controls permitted MQTT actions and resources.
-
-Private keys and certificates must never be committed to GitHub.
-
-The `.gitignore` excludes sensitive certificate and environment files.
-
-### S3 / CloudFront
-
-When CloudFront is enabled, the intended architecture is:
+Architecture:
 
 ```text
-Internet
+Browser
+   ↓
+S3 Website
+```
+
+## Final Presentation
+
+Enable CloudFront:
+
+```powershell
+.\deploy.ps1 -EnableCloudFront $true
+```
+
+Architecture:
+
+```text
+Browser
    ↓
 CloudFront
    ↓
-S3 Dashboard Bucket
+S3 Website
 ```
 
-S3 access should be configured according to the selected CloudFront architecture.
+CloudFront is therefore an optional presentation and distribution layer rather than a mandatory dependency of the application logic.
 
-## 9.2 Monitoring
+---
 
-CloudWatch is used for:
+# 15. Security & Monitoring
 
-- Lambda logs
-- Error investigation
-- Application monitoring
-- Metrics
-- Alarms
+## 15.1 IAM
 
-Recommended troubleshooting sequence:
+IAM controls permissions between services.
+
+The Lambda execution role provides permissions for:
+
+- DynamoDB
+- S3
+- SNS
+- CloudWatch Logs
+- required IoT operations
+
+## 15.2 IoT Security
+
+MQTT uses X.509 certificates.
+
+The IoT policy controls:
 
 ```text
-Sensor Simulator
-       ↓
-API Gateway / IoT Core
-       ↓
-Lambda
-       ↓
-DynamoDB / S3
-       ↓
-Query Lambda
-       ↓
-API Gateway GET
-       ↓
-Dashboard
+Connect
+Publish
+Subscribe
+Receive
 ```
 
-## 9.3 Cost Optimization
+Private keys must never be committed to GitHub.
+
+## 15.3 S3 Security
+
+The data bucket uses:
+
+- Server-side encryption
+- Public access blocking
+- HTTPS-only access
+- Lifecycle management
+
+The website bucket can be accessed directly during development or through CloudFront when CloudFront is enabled.
+
+## 15.4 CloudWatch
+
+CloudWatch provides:
+
+- Lambda logs
+- Metrics
+- Error alarms
+- Application monitoring
+- Troubleshooting information
+
+---
+
+# 16. Cost Optimization
 
 The project is designed as a low-cost serverless application.
 
-It does not require EC2 or RDS.
+It does not require:
 
-### Sensor Interval
+```text
+EC2
+RDS
+```
 
-For normal demonstrations use:
+## 16.1 Sensor Interval
+
+The default interval is:
 
 ```text
 60 seconds
 ```
 
-instead of sending data every few seconds.
+For normal operation:
 
-For quick tests:
+```powershell
+python sensor_simulator.py --api --interval 60
+```
+
+For MQTT:
+
+```powershell
+python sensor_simulator.py --mqtt --interval 60
+```
+
+A 60-second interval generates significantly fewer requests than a 5-second interval.
+
+For short tests use:
 
 ```powershell
 python sensor_simulator.py --api --interval 2 --max-readings 3
@@ -937,112 +1180,100 @@ or:
 python sensor_simulator.py --mqtt --interval 2 --max-readings 3
 ```
 
-### CloudFront
+## 16.2 CloudFront
 
-Development:
+Keep CloudFront disabled during development:
 
 ```powershell
 .\deploy.ps1
 ```
 
-Final presentation:
+Enable it only for the final presentation:
 
 ```powershell
 .\deploy.ps1 -EnableCloudFront $true
 ```
 
-### Additional Cost Controls
+## 16.3 Additional Cost Controls
 
 - Avoid continuously running the simulator
-- Use limited test readings
-- Keep CloudFront disabled when unnecessary
-- Remove old S3 test data
-- Use appropriate S3 lifecycle policies
-- Use reasonable CloudWatch log retention
-- Use on-demand DynamoDB capacity for small workloads
-- Delete the CloudFormation stack after testing
+- Use `--max-readings` for tests
+- Use a 60-second interval for demonstrations
+- Keep CloudFront disabled unless required
+- Use DynamoDB on-demand billing
+- Use S3 lifecycle policies
+- Keep CloudWatch retention reasonable
+- Delete old test data
+- Clean up the CloudFormation stack after testing
 - Monitor AWS Billing and Cost Management
-
-Actual AWS costs depend on region, usage, account type, Free Tier eligibility and current AWS pricing.
 
 ---
 
-# 10. Troubleshooting, Cleanup & Presentation Questions
+# 17. Troubleshooting
 
-## 10.1 Troubleshooting
-
-### Offline simulator does not start
+## API does not work
 
 Check:
-
-```powershell
-python --version
-pip install requests AWSIoTPythonSDK
-python sensor_simulator.py --help
-```
-
-### API request fails
-
-Check in this order:
 
 ```text
 1. API Gateway URL
-2. API Gateway stage/deployment
+2. API Gateway /data resource
 3. POST method
 4. Lambda integration
-5. Lambda CloudWatch logs
-6. IAM permissions
+5. Lambda permissions
+6. CloudWatch logs
 7. Request JSON
 ```
 
-### MQTT does not work
+## MQTT does not work
 
 Check:
 
 ```text
-1. AWS IoT endpoint
+1. IoT endpoint
 2. IoT Thing
 3. Certificate
 4. Private key
 5. Root CA
 6. IoT policy
-7. MQTT topic
+7. sensor/data topic
 8. IoT Rule
 9. Lambda permission
 10. CloudWatch logs
 ```
 
-### Dashboard shows no data
+## Dashboard shows no data
 
 Check:
 
 ```text
-1. Generated config.js
-2. API Gateway GET endpoint
+1. config.js
+2. API Gateway GET /data
 3. Query Lambda
-4. DynamoDB table
-5. Browser developer console
+4. DynamoDB
+5. Browser console
 6. S3 dashboard files
-7. CloudFront distribution, if enabled
+7. CloudFront if enabled
 ```
 
-If DynamoDB is empty, follow the ingestion path backwards.
+## Local mock API does not start
 
-### CloudFront dashboard is not updated
+Install:
 
-Check:
+```powershell
+pip install flask flask-cors
+```
 
-```text
-1. Dashboard uploaded to S3
-2. Generated config.js contains the correct endpoint
-3. CloudFront distribution status
-4. Browser cache
-5. CloudFront invalidation
+Then:
+
+```powershell
+cd src\simulator
+python mock_api.py
 ```
 
 ---
 
-## 10.2 Cleanup
+# 18. Cleanup
 
 After testing:
 
@@ -1051,13 +1282,15 @@ cd scripts
 .\cleanup.ps1
 ```
 
-Then verify:
+Then:
 
 ```powershell
 .\verify-cleanup.ps1
 ```
 
-Check that unused resources have been removed:
+Verify that unnecessary AWS resources have been removed.
+
+Pay particular attention to:
 
 - CloudFormation
 - Lambda
@@ -1070,95 +1303,92 @@ Check that unused resources have been removed:
 - CloudWatch
 - IAM resources
 
-S3 buckets may need to be emptied before they can be deleted.
+The S3 buckets and other resources use retention settings in parts of the infrastructure, so verify retained resources manually when necessary.
 
 ---
 
-## 10.3 Final Testing Checklist
+# 19. Final Testing Checklist
 
 | Test | Expected Result |
 |---|---|
-| Offline simulator | Sensor data is generated locally |
-| Offline dashboard | Dashboard loads with mock data |
-| API POST | Successful HTTP response |
-| Processing Lambda | Measurement is processed |
-| DynamoDB Latest | Current value is stored |
-| DynamoDB History | Historical record is stored |
-| S3 archive | Raw-data object is created |
-| API GET | JSON data is returned |
+| Offline simulator | Sensor data generated locally |
+| Mock API | Local backend accepts sensor data |
+| API POST | Sensor data reaches Process Lambda |
+| Process Lambda | Data is validated and processed |
+| Latest DynamoDB | Current sensor state is stored |
+| History DynamoDB | Historical measurement is stored |
+| S3 data bucket | Raw data is archived |
+| SNS | Alert is sent when a threshold is exceeded |
+| API GET | Dashboard data is returned |
+| Query Lambda | Dashboard query is processed |
 | Dashboard | Sensor values are displayed |
 | MQTT | Data reaches IoT Core |
 | IoT Rule | Lambda is triggered |
-| SNS | Alert is generated when threshold is exceeded |
-| CloudWatch | Logs are available |
-| CloudFront | Dashboard is accessible when enabled |
-| Cleanup | Unused resources are removed |
+| CloudWatch | Logs and alarms are available |
+| CloudFront | Dashboard is available when enabled |
+| Cleanup | Unnecessary resources are removed |
 
 ---
 
-## 10.4 Presentation Questions
+# 20. Presentation Questions
 
-### Why did you choose a serverless architecture?
+## Why did you choose serverless?
 
-The application uses managed and serverless services such as Lambda, DynamoDB, API Gateway and S3. This reduces infrastructure management and allows the application to scale without managing servers.
+The application uses managed and serverless AWS services such as Lambda, API Gateway, DynamoDB and S3. This reduces infrastructure management and is suitable for a small IoT monitoring application.
 
-### Why do you use both API Gateway and IoT Core?
+## Why do you use both API Gateway and IoT Core?
 
-API Gateway provides a simple HTTPS interface for REST-based ingestion and testing. IoT Core is designed specifically for MQTT-based IoT communication.
+API Gateway provides a simple HTTPS interface for REST-based ingestion and testing. IoT Core is designed for MQTT-based IoT communication.
 
-### Can you switch between API and MQTT?
+## Can you switch between API and MQTT?
 
-Yes. The official sensor simulator supports `--api` and `--mqtt`. Both ingestion paths use the same processing Lambda.
+Yes. The official sensor simulator supports `--api` and `--mqtt`. Both paths use the same Process Lambda and the same storage and alerting layers.
 
-### Why do you use two DynamoDB tables?
+## Why are there two DynamoDB tables?
 
-The latest-state table provides efficient access to the current sensor state, while the historical table stores measurements over time.
+One table stores the latest state of each sensor, while the second stores historical sensor measurements.
 
-### Why do you use S3?
+## Why are there two functional S3 buckets?
 
-S3 provides durable object storage for raw sensor data and hosts the static dashboard.
+One stores sensor-data archives and the other hosts the dashboard. A third S3 bucket is used only for Lambda deployment packages.
 
-### Why do you use Lambda?
+## Why are Process Lambda and Query Lambda separate?
 
-Lambda processes sensor data without requiring a continuously running server.
+Process Lambda handles incoming sensor data and writes data. Query Lambda reads data for the dashboard. Separating these responsibilities improves maintainability and testing.
 
-### Why do you use SNS?
+## What is `mock_api.py`?
 
-SNS provides notification functionality when predefined sensor thresholds are exceeded.
+`mock_api.py` is a local backend testing utility. It simulates the API Gateway/Lambda behavior without connecting to AWS.
 
-### Why do you use CloudWatch?
+## What happened to `api_simulator.py`?
 
-CloudWatch provides logs, metrics and alarms that help monitor and troubleshoot the application.
+`api_simulator.py` was removed from the project. The official simulator is now `sensor_simulator.py`, while `mock_api.py` is used for local backend testing.
 
-### Why do you use CloudFormation?
+## Why is `config.js` generated?
 
-CloudFormation defines the infrastructure as code, making the deployment repeatable and reducing manual configuration.
+The API Gateway URL is created dynamically during CloudFormation deployment. Therefore `deploy.ps1` generates `config.js` with the current endpoint instead of hard-coding it in the dashboard.
 
-### How do you reduce costs?
+## Why is CloudFront optional?
 
-I use a 60-second sensor interval, limit test readings, keep optional CloudFront disabled during development, use lifecycle and retention policies, avoid unnecessary continuous execution, and clean up AWS resources after testing.
+The dashboard can work directly with S3 during development. CloudFront is enabled for the final presentation when a CDN layer is desired.
 
-### What happens when a sensor sends data?
+## Why use 60 seconds?
 
-The data enters through API Gateway or IoT Core. The processing Lambda validates and processes it, stores current and historical values in DynamoDB, archives raw data in S3, and can publish an SNS alert when a threshold is exceeded.
+A 60-second interval reduces the number of requests and therefore reduces unnecessary AWS usage and cost while still providing enough data for a demonstration.
 
-### What is `api_simulator.py`?
+## What happens when a sensor sends data?
 
-`api_simulator.py` is a legacy/test utility retained for additional API testing. It is not the primary simulator used by the final architecture. The official simulator is `sensor_simulator.py`, which supports offline, API and MQTT modes.
+The sensor sends data through API Gateway or IoT Core. The Process Lambda validates and processes the data, updates the latest DynamoDB record, stores historical data, archives raw data in S3 and can publish an SNS alert when a threshold is exceeded.
 
-### Why is `config.js` not maintained manually?
+## Why use CloudFormation?
 
-The API Gateway URL is created dynamically by CloudFormation. Therefore `deploy.ps1` generates `config.js` after deployment so that the dashboard always receives the current API endpoint.
-
-### How would you improve the project in the future?
-
-Possible improvements include physical garden sensors, automatic irrigation, anomaly detection, user authentication, multiple garden locations, mobile access, advanced analytics, CI/CD deployment and automated integration testing.
+CloudFormation defines the AWS infrastructure as code. This makes the deployment repeatable and reduces manual configuration errors.
 
 ---
 
 # Technologies Used
 
-## Programming
+## Programming Languages
 
 - Python
 - JavaScript
@@ -1166,15 +1396,15 @@ Possible improvements include physical garden sensors, automatic irrigation, ano
 - CSS3
 - PowerShell
 
-## AWS
+## AWS Services
 
 - AWS IoT Core
 - AWS Lambda
+- Amazon API Gateway
 - Amazon DynamoDB
 - Amazon S3
-- Amazon API Gateway
-- Amazon CloudFront
 - Amazon SNS
+- Amazon CloudFront
 - Amazon CloudWatch
 - AWS IAM
 - AWS CloudFormation
@@ -1186,7 +1416,13 @@ Possible improvements include physical garden sensors, automatic irrigation, ano
 - Git
 - GitHub
 - Python pip
-- Python virtual environment
+- PowerShell
+
+## Local Testing
+
+- Flask
+- Flask-CORS
+- Python-based sensor simulation
 
 ---
 
@@ -1204,6 +1440,7 @@ Possible future extensions include:
 - Advanced analytics
 - CI/CD deployment
 - Automated integration testing
+- Predictive plant-care recommendations
 
 ---
 
