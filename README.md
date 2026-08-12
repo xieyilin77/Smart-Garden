@@ -697,7 +697,7 @@ The simulator can then use the generated MQTT endpoint/certificate configuration
 The MQTT connection supports:
 
 ```text
-MQTT over TLS:      port 8883
+MQTT over TLS:       port 8883
 MQTT over WebSocket: port 443
 ```
 
@@ -928,7 +928,7 @@ Adaptive HTTP polling:
 
 ```text
 TLS MQTT:        8883
-WebSocket MQTT: 443
+WebSocket MQTT:  443
 Topic:           sensor/data
 ```
 
@@ -960,7 +960,7 @@ The following points are intentionally documented so that the README does not cl
 
 1. `config.js` is generated during deployment and is not committed.
 2. The deployed configuration uses API mode (`USE_MOCK_DATA = false`).
-3. Dashboard updates use 10-second HTTP polling rather than a push/WebSocket data stream.
+3. Dashboard updates use adaptive HTTP polling (30s/45s/60s depending on time of day) rather than a push/WebSocket data stream. The polling is paused when the browser tab is hidden.
 4. The S3 archive uses `.json` object names but uploads JSONL-style content with `application/jsonl`.
 5. Historical readings are stored in both DynamoDB and S3.
 6. The `SensorDateIndex` GSI is defined in CloudFormation, but the current processing Lambda does not populate the `date` attribute and the query Lambda does not use this index.
