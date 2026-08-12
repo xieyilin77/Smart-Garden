@@ -50,81 +50,74 @@ try {
 Write-Host ""
 
 # ============================================
-# DELETE SMART GARDEN IOT CERTIFICATES ONLY
+# DELETE ALL IOT CERTIFICATES
 # ============================================
-Write-Host "Deleting Smart Garden IoT Certificates..." -ForegroundColor Yellow
+Write-Host "Deleting ALL IoT Certificates..." -ForegroundColor Yellow
 
-$thingNamesJson = aws iot list-things --region $Region --query "things[?starts_with(thingName, 'smart-garden')].thingName" --output json 2>&1
+# Get all certificate IDs from IoT Core
+$certificatesJson = aws iot list-certificates --region $Region --query "certificates[].certificateId" --output json 2>&1
 
-if ($LASTEXITCODE -eq 0 -and $thingNamesJson -and $thingNamesJson -ne "null" -and $thingNamesJson -ne "[]") {
+if ($LASTEXITCODE -eq 0 -and $certificatesJson -and $certificatesJson -ne "null" -and $certificatesJson -ne "[]") {
     try {
-        $thingNames = $thingNamesJson | ConvertFrom-Json
+        $certificates = $certificatesJson | ConvertFrom-Json
         
-        if ($thingNames -and $thingNames.Count -gt 0) {
-            Write-Host "  Found $($thingNames.Count) Smart Garden things" -ForegroundColor Gray
-            
-            foreach ($thingName in $thingNames) {
-                Write-Host "  Processing certificates for thing: $thingName" -ForegroundColor Gray
+        if ($certificates) {
+            foreach ($certId in $certificates) {
+                Write-Host "  Processing certificate: $certId" -ForegroundColor Gray
                 
-                $principalsJson = aws iot list-thing-principals --thing-name $thingName --region $Region --query "principals" --output json 2>&1
+                # Get certificate ARN
+                $certArn = aws iot list-certificates --region $Region --query "certificates[?certificateId=='$certId'].certificateArn" --output text
                 
-                if ($LASTEXITCODE -eq 0 -and $principalsJson -and $principalsJson -ne "null" -and $principalsJson -ne "[]") {
+                # Detach all policies attached to this certificate
+                $policiesJson = aws iot list-attached-policies --target $certArn --region $Region --query "policies[].policyName" --output json 2>$null
+                if ($LASTEXITCODE -eq 0 -and $policiesJson -and $policiesJson -ne "null" -and $policiesJson -ne "[]") {
                     try {
-                        $principals = $principalsJson | ConvertFrom-Json
-                        
-                        foreach ($principal in $principals) {
-                            if ($principal -match 'certificate/([^/]+)$') {
-                                $certId = $matches[1]
-                                Write-Host "    Processing certificate: $certId" -ForegroundColor Gray
-                                
-                                if (-not $DryRun) {
-                                    # Policies detachen
-                                    $policiesJson = aws iot list-attached-policies --target $principal --region $Region --query "policies[].policyName" --output json 2>&1
-                                    if ($LASTEXITCODE -eq 0 -and $policiesJson -and $policiesJson -ne "null" -and $policiesJson -ne "[]") {
-                                        try {
-                                            $policies = $policiesJson | ConvertFrom-Json
-                                            foreach ($policy in $policies) {
-                                                Write-Host "      Detaching policy: $policy" -ForegroundColor Gray
-                                                aws iot detach-policy --policy-name $policy --target $principal --region $Region 2>&1 | Out-Null
-                                            }
-                                        } catch {
-                                            Write-Host "      No policies to detach" -ForegroundColor Gray
-                                        }
-                                    }
-                                    
-                                    # Certificate deaktivieren
-                                    Write-Host "      Deactivating certificate..." -ForegroundColor Gray
-                                    aws iot update-certificate --certificate-id $certId --new-status INACTIVE --region $Region 2>&1 | Out-Null
-                                    
-                                    # Certificate löschen
-                                    Write-Host "      Deleting certificate..." -ForegroundColor Gray
-                                    aws iot delete-certificate --certificate-id $certId --region $Region 2>&1 | Out-Null
-                                    
-                                    if ($LASTEXITCODE -eq 0) {
-                                        Write-Host "    ✅ Deleted certificate: $certId" -ForegroundColor Green
-                                    } else {
-                                        Write-Host "    ❌ Could not delete certificate: $certId" -ForegroundColor Red
-                                    }
-                                } else {
-                                    Write-Host "    🔍 [DRY RUN] Would delete certificate: $certId" -ForegroundColor Cyan
-                                }
-                            }
+                        $policies = $policiesJson | ConvertFrom-Json
+                        foreach ($policy in $policies) {
+                            Write-Host "    Detaching policy: $policy" -ForegroundColor Gray
+                            aws iot detach-policy --policy-name $policy --target $certArn --region $Region 2>&1 | Out-Null
                         }
                     } catch {
-                        Write-Host "    Error parsing principals: $_" -ForegroundColor Yellow
+                        # No policies to detach - continue
                     }
+                }
+                
+                # Detach from all things
+                $thingsJson = aws iot list-thing-principals --principal $certArn --region $Region --query "things" --output json 2>$null
+                if ($LASTEXITCODE -eq 0 -and $thingsJson -and $thingsJson -ne "null" -and $thingsJson -ne "[]") {
+                    try {
+                        $things = $thingsJson | ConvertFrom-Json
+                        foreach ($thing in $things) {
+                            Write-Host "    Detaching from thing: $thing" -ForegroundColor Gray
+                            aws iot detach-thing-principal --thing-name $thing --principal $certArn --region $Region 2>&1 | Out-Null
+                        }
+                    } catch {
+                        # No things to detach - continue
+                    }
+                }
+                
+                # Deactivate the certificate before deletion
+                Write-Host "    Deactivating certificate..." -ForegroundColor Gray
+                aws iot update-certificate --certificate-id $certId --new-status INACTIVE --region $Region 2>&1 | Out-Null
+                
+                # Delete the certificate
+                Write-Host "    Deleting certificate..." -ForegroundColor Gray
+                aws iot delete-certificate --certificate-id $certId --region $Region 2>&1 | Out-Null
+                
+                if ($LASTEXITCODE -eq 0) {
+                    Write-Host "  Deleted certificate: $certId" -ForegroundColor Green
                 } else {
-                    Write-Host "    No certificates attached to thing: $thingName" -ForegroundColor Gray
+                    Write-Host "  Could not delete certificate: $certId" -ForegroundColor Red
                 }
             }
         } else {
-            Write-Host "  No Smart Garden things found" -ForegroundColor Gray
+            Write-Host "  No certificates found" -ForegroundColor Gray
         }
     } catch {
-        Write-Host "  Error: $_" -ForegroundColor Yellow
+        Write-Host "  No certificates found" -ForegroundColor Gray
     }
 } else {
-    Write-Host "  No Smart Garden things found" -ForegroundColor Gray
+    Write-Host "  No certificates found" -ForegroundColor Gray
 }
 Write-Host ""
 
@@ -145,7 +138,7 @@ foreach ($bucket in $buckets) {
     
     # 1. Check if bucket exists
     Write-Host "  Checking if bucket exists..." -ForegroundColor Gray
-    aws s3api head-bucket --bucket $bucket --region $Region 2>&1
+    $bucketExists = aws s3api head-bucket --bucket $bucket --region $Region 2>&1
     if ($LASTEXITCODE -ne 0) {
         Write-Host "  Bucket does not exist, skipping" -ForegroundColor Yellow
         continue
@@ -447,7 +440,7 @@ Write-Host ""
 Write-Host "Deleting IoT Authorizer..." -ForegroundColor Yellow
 
 $authorizerName = "$StackName-authorizer"
-aws iot describe-authorizer --authorizer-name $authorizerName --region $Region 2>&1
+$authorizerExists = aws iot describe-authorizer --authorizer-name $authorizerName --region $Region 2>&1
 if ($LASTEXITCODE -eq 0) {
     Write-Host "  Deleting IoT authorizer: $authorizerName" -ForegroundColor Gray
     aws iot delete-authorizer --authorizer-name $authorizerName --region $Region 2>&1 | Out-Null
