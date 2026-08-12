@@ -215,6 +215,81 @@ let currentHistory = [];
 let isRefreshing = false;
 let abortController = null;
 let isManualRefresh = false;
+let lastDataHash = '';
+let isInitialLoad = true;
+
+// ============================================
+// AUTO-REFRESH
+// ============================================
+
+function getRefreshInterval() {
+    const hour = new Date().getHours();
+    
+    if (hour < 6 || hour > 22) {
+        console.log('🌙 Night mode: Slower refresh (60s)');
+        return 60000; // 1 Minutes
+    }
+    
+    if (hour >= 8 && hour <= 20) {
+        console.log('☀️ Day mode: Fast refresh (30s)');
+        return 30000; // 30 Seconds
+    }
+    
+    console.log('🌅 Transition mode: Medium refresh (45s)');
+    return 45000; // 45 Seconds
+}
+
+function hasDataChanged(newData) {
+    if (!newData || !newData.latest) return true;
+    
+    const currentHash = JSON.stringify({
+        temperature: newData.latest.temperature,
+        humidity: newData.latest.humidity,
+        soil_moisture: newData.latest.soil_moisture,
+        timestamp: newData.latest.timestamp
+    });
+    
+    if (currentHash === lastDataHash && !isInitialLoad) {
+        return false;
+    }
+    
+    lastDataHash = currentHash;
+    isInitialLoad = false;
+    return true;
+}
+
+function startAutoRefresh() {
+    if (refreshTimer) clearInterval(refreshTimer);
+
+    loadData();
+
+    const startTimer = () => {
+        const interval = getRefreshInterval();
+        if (refreshTimer) clearInterval(refreshTimer);
+        
+        refreshTimer = setInterval(() => {
+            if (!document.hidden) {
+                console.log(`🔄 Auto-refresh (${interval/1000}s interval)`);
+                loadData();
+            } else {
+                console.log('⏸️ Dashboard hidden - skipping refresh');
+            }
+        }, interval);
+        console.log(`⏰ Auto-refresh started (${interval/1000}s interval)`);
+    };
+    
+    startTimer();
+
+    document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) {
+            console.log('👁️ Dashboard visible - refreshing now');
+            loadData();
+
+            clearInterval(refreshTimer);
+            startTimer();
+        }
+    });
+}
 
 // ============================================
 // INIT CHARTS
@@ -455,8 +530,13 @@ function updateUI(data) {
         return; 
     }
     
-    console.log('🔄 Updating UI...');
+    if (!hasDataChanged(data)) {
+        console.log('⏭️ No data change, skipping UI update');
+        return;
+    }
     
+    console.log('🔄 Updating UI with new data...');
+
     if (data.latest) {
         updateCurrentValues(data.latest);
     }
@@ -708,11 +788,6 @@ function updateTable(history) {
         const tempIcon = getStatusIndicator(tempVal, THRESHOLDS.temperature.low, THRESHOLDS.temperature.high);
         const humIcon = getStatusIndicator(humVal, THRESHOLDS.humidity.low, THRESHOLDS.humidity.high);
         const moistIcon = getStatusIndicator(moistVal, THRESHOLDS.soil_moisture.low, THRESHOLDS.soil_moisture.high);
-        
-        // Optional: Debug-Ausgabe
-        if (humVal !== '--') {
-            console.log(`🔍 humVal=${humVal}, icon=${humIcon}`);
-        }
 
         const displayText = ageText ? `${displayTimestamp} ${ageText}` : displayTimestamp;
         
@@ -778,6 +853,7 @@ function addManualDataPoint() {
         query_timestamp: formatLocalTime(now) 
     };
     
+    lastDataHash = '';
     updateUI(data);
     
     let feedbackMsg = `✅ Data point added: ${temp}°C, ${humidity}%, ${moisture}%`;
@@ -838,11 +914,12 @@ function calculateStatsFromHistory(history) {
 function refreshData() {
     console.log('🔄 Manual refresh...');
     isManualRefresh = true;
+    lastDataHash = '';
     loadData();
     setTimeout(() => { isManualRefresh = false; }, 1000);
 }
 
-function startAutoRefresh() {
+/* function startAutoRefresh() {
     if (refreshTimer) clearInterval(refreshTimer);
     refreshTimer = setInterval(() => { 
         if (!isManualRefresh) { 
@@ -851,7 +928,7 @@ function startAutoRefresh() {
     }, REFRESH_INTERVAL);
     console.log(`⏰ Auto-refresh started (${REFRESH_INTERVAL / 1000}s)`);
 }
-
+ */
 // ============================================
 // EXPORT DATA
 // ============================================
