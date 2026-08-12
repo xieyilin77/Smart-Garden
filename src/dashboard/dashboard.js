@@ -15,6 +15,12 @@ console.log('📡 API URL:', API_URL);
 console.log('🎯 USE_MOCK_DATA:', window.USE_MOCK_DATA);
 console.log('🔑 SENSOR ID:', SENSOR_ID);
 
+const THRESHOLDS = {
+    temperature: { low: 5, high: 35 },
+    humidity: { low: 40, high: 90 },
+    soil_moisture: { low: 30, high: 80 }
+};
+
 // ============================================
 // TOAST NOTIFICATION
 // ============================================
@@ -124,9 +130,10 @@ function getDataAgeText(timestamp) {
 }
 
 function getStatusIndicator(value, min, max) {
-    if (value === null || value === undefined || isNaN(value)) return '⏳';
-    if (value < min) return '🔽';
-    if (value > max) return '🔼';
+    const num = parseFloat(value);
+    if (isNaN(num)) return '⏳';
+    if (num < min) return '🔽';
+    if (num > max) return '🔼';
     return '✅';
 }
 
@@ -509,9 +516,9 @@ function updateCurrentValues(latest) {
     document.getElementById('sensorStatus').style.color = 
         dataAge < 5 ? '#27ae60' : dataAge < 30 ? '#f39c12' : '#e74c3c';
     
-    updateStatusBadge('tempStatus', temp, 15, 35, '°C');
-    updateStatusBadge('humidityStatus', hum, 30, 80, '%');
-    updateStatusBadge('moistureStatus', moist, 30, 70, '%');
+    updateStatusBadge('tempStatus', temp, THRESHOLDS.temperature.low, THRESHOLDS.temperature.high, '°C');
+    updateStatusBadge('humidityStatus', hum, THRESHOLDS.humidity.low, THRESHOLDS.humidity.high, '%');
+    updateStatusBadge('moistureStatus', moist, THRESHOLDS.soil_moisture.low, THRESHOLDS.soil_moisture.high, '%');
 }
 
 function updateStatusBadge(elementId, value, min, max, unit) {
@@ -696,11 +703,17 @@ function updateTable(history) {
             ? round(row.humidity, 1) : '--';
         const moistVal = row.soil_moisture !== undefined && row.soil_moisture !== null 
             ? round(row.soil_moisture, 1) : '--';
+
+
+        const tempIcon = getStatusIndicator(tempVal, THRESHOLDS.temperature.low, THRESHOLDS.temperature.high);
+        const humIcon = getStatusIndicator(humVal, THRESHOLDS.humidity.low, THRESHOLDS.humidity.high);
+        const moistIcon = getStatusIndicator(moistVal, THRESHOLDS.soil_moisture.low, THRESHOLDS.soil_moisture.high);
         
-        const tempIcon = getStatusIndicator(tempVal, 15, 35);
-        const humIcon = getStatusIndicator(humVal, 30, 80);
-        const moistIcon = getStatusIndicator(moistVal, 30, 70);
-        
+        // Optional: Debug-Ausgabe
+        if (humVal !== '--') {
+            console.log(`🔍 humVal=${humVal}, icon=${humIcon}`);
+        }
+
         const displayText = ageText ? `${displayTimestamp} ${ageText}` : displayTimestamp;
         
         return `<tr>

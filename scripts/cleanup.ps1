@@ -22,6 +22,8 @@ Write-Host "  - IoT Core things and rules" -ForegroundColor Gray
 Write-Host "  - IoT Policies" -ForegroundColor Gray
 Write-Host "  - IoT Certificates (ALL)" -ForegroundColor Gray
 Write-Host "  - CloudWatch Log Groups" -ForegroundColor Gray
+Write-Host "  - SNS Topics" -ForegroundColor Gray
+Write-Host "  - IAM Roles" -ForegroundColor Gray
 Write-Host ""
 
 $confirm = Read-Host "Are you sure you want to continue? (yes/no)"
@@ -253,7 +255,7 @@ Write-Host ""
 # ============================================
 Write-Host "Deleting CloudWatch Log Groups (before stack deletion)..." -ForegroundColor Yellow
 
-# Find all log groups with "smart-garden" in the name
+# Find all log groups with "smart-garden" or "smart_garden" in the name
 $logGroupsJson = aws logs describe-log-groups --region $Region --query "logGroups[?contains(logGroupName, 'smart-garden') || contains(logGroupName, 'smart_garden')].logGroupName" --output json 2>&1
 
 if ($LASTEXITCODE -eq 0 -and $logGroupsJson -and $logGroupsJson -ne "null" -and $logGroupsJson -ne "[]") {
@@ -492,6 +494,191 @@ if ($elapsed.TotalSeconds -ge $timeout) {
 Write-Host ""
 
 # ============================================
+# DELETE REMAINING LAMBDA FUNCTIONS
+# ============================================
+Write-Host "Deleting remaining Lambda functions..." -ForegroundColor Yellow
+
+$lambdaFunctionsJson = aws lambda list-functions --region $Region --query "Functions[?contains(FunctionName, 'smart-garden')].FunctionName" --output json 2>&1
+
+if ($LASTEXITCODE -eq 0 -and $lambdaFunctionsJson -and $lambdaFunctionsJson -ne "null" -and $lambdaFunctionsJson -ne "[]") {
+    try {
+        $lambdaFunctions = $lambdaFunctionsJson | ConvertFrom-Json
+        foreach ($func in $lambdaFunctions) {
+            Write-Host "  Deleting Lambda: $func" -ForegroundColor Gray
+            aws lambda delete-function --function-name $func --region $Region 2>&1 | Out-Null
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host "    Deleted" -ForegroundColor Green
+            } else {
+                Write-Host "    Could not delete" -ForegroundColor Red
+            }
+        }
+    } catch {
+        Write-Host "  No Lambda functions found" -ForegroundColor Gray
+    }
+} else {
+    Write-Host "  No Lambda functions found" -ForegroundColor Gray
+}
+Write-Host ""
+
+# ============================================
+# DELETE REMAINING DYNAMODB TABLES
+# ============================================
+Write-Host "Deleting remaining DynamoDB tables..." -ForegroundColor Yellow
+
+$tablesJson = aws dynamodb list-tables --region $Region --query "TableNames[?contains(@, 'smart-garden')]" --output json 2>&1
+
+if ($LASTEXITCODE -eq 0 -and $tablesJson -and $tablesJson -ne "null" -and $tablesJson -ne "[]") {
+    try {
+        $tables = $tablesJson | ConvertFrom-Json
+        foreach ($table in $tables) {
+            Write-Host "  Deleting table: $table" -ForegroundColor Gray
+            aws dynamodb delete-table --table-name $table --region $Region 2>&1 | Out-Null
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host "    Deletion initiated" -ForegroundColor Green
+            } else {
+                Write-Host "    Could not delete" -ForegroundColor Red
+            }
+        }
+    } catch {
+        Write-Host "  No tables found" -ForegroundColor Gray
+    }
+} else {
+    Write-Host "  No tables found" -ForegroundColor Gray
+}
+Write-Host ""
+
+# ============================================
+# DELETE REMAINING SNS TOPICS
+# ============================================
+Write-Host "Deleting remaining SNS topics..." -ForegroundColor Yellow
+
+$topicsJson = aws sns list-topics --region $Region --query "Topics[?contains(TopicArn, 'smart-garden')].TopicArn" --output json 2>&1
+
+if ($LASTEXITCODE -eq 0 -and $topicsJson -and $topicsJson -ne "null" -and $topicsJson -ne "[]") {
+    try {
+        $topics = $topicsJson | ConvertFrom-Json
+        foreach ($topicArn in $topics) {
+            Write-Host "  Processing topic: $topicArn" -ForegroundColor Gray
+
+            # List and delete subscriptions
+            $subsJson = aws sns list-subscriptions-by-topic --topic-arn $topicArn --region $Region --query "Subscriptions[].SubscriptionArn" --output json 2>&1
+            if ($LASTEXITCODE -eq 0 -and $subsJson -and $subsJson -ne "null" -and $subsJson -ne "[]") {
+                try {
+                    $subs = $subsJson | ConvertFrom-Json
+                    foreach ($sub in $subs) {
+                        if ($sub -ne "PendingConfirmation") {
+                            Write-Host "    Deleting subscription: $sub" -ForegroundColor Gray
+                            aws sns unsubscribe --subscription-arn $sub --region $Region 2>&1 | Out-Null
+                        }
+                    }
+                } catch {
+                    Write-Host "    No subscriptions found" -ForegroundColor Gray
+                }
+            }
+
+            # Delete the topic
+            Write-Host "    Deleting topic..." -ForegroundColor Gray
+            aws sns delete-topic --topic-arn $topicArn --region $Region 2>&1 | Out-Null
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host "    Deleted" -ForegroundColor Green
+            } else {
+                Write-Host "    Could not delete" -ForegroundColor Red
+            }
+        }
+    } catch {
+        Write-Host "  No SNS topics found" -ForegroundColor Gray
+    }
+} else {
+    Write-Host "  No SNS topics found" -ForegroundColor Gray
+}
+Write-Host ""
+
+# ============================================
+# DELETE REMAINING IAM ROLES
+# ============================================
+Write-Host "Deleting remaining IAM roles..." -ForegroundColor Yellow
+
+$rolesJson = aws iam list-roles --region $Region --query "Roles[?contains(RoleName, 'smart-garden')].RoleName" --output json 2>&1
+
+if ($LASTEXITCODE -eq 0 -and $rolesJson -and $rolesJson -ne "null" -and $rolesJson -ne "[]") {
+    try {
+        $roles = $rolesJson | ConvertFrom-Json
+        foreach ($role in $roles) {
+            Write-Host "  Processing role: $role" -ForegroundColor Gray
+
+            # 1. Detach all attached managed policies
+            $policiesJson = aws iam list-attached-role-policies --role-name $role --region $Region --query "AttachedPolicies[].PolicyArn" --output json 2>&1
+            if ($LASTEXITCODE -eq 0 -and $policiesJson -and $policiesJson -ne "null" -and $policiesJson -ne "[]") {
+                try {
+                    $policyArns = $policiesJson | ConvertFrom-Json
+                    foreach ($policyArn in $policyArns) {
+                        Write-Host "    Detaching managed policy: $policyArn" -ForegroundColor Gray
+                        aws iam detach-role-policy --role-name $role --policy-arn $policyArn --region $Region 2>&1 | Out-Null
+                    }
+                } catch {
+                    Write-Host "    No managed policies attached" -ForegroundColor Gray
+                }
+            }
+
+            # 2. Delete all inline policies
+            $inlinePoliciesJson = aws iam list-role-policies --role-name $role --region $Region --query "PolicyNames" --output json 2>&1
+            if ($LASTEXITCODE -eq 0 -and $inlinePoliciesJson -and $inlinePoliciesJson -ne "null" -and $inlinePoliciesJson -ne "[]") {
+                try {
+                    $inlinePolicies = $inlinePoliciesJson | ConvertFrom-Json
+                    foreach ($policyName in $inlinePolicies) {
+                        Write-Host "    Deleting inline policy: $policyName" -ForegroundColor Gray
+                        aws iam delete-role-policy --role-name $role --policy-name $policyName --region $Region 2>&1 | Out-Null
+                    }
+                } catch {
+                    Write-Host "    No inline policies" -ForegroundColor Gray
+                }
+            }
+
+            # 3. Remove from any instance profiles
+            $instanceProfilesJson = aws iam list-instance-profiles-for-role --role-name $role --region $Region --query "InstanceProfiles[].InstanceProfileName" --output json 2>&1
+            if ($LASTEXITCODE -eq 0 -and $instanceProfilesJson -and $instanceProfilesJson -ne "null" -and $instanceProfilesJson -ne "[]") {
+                try {
+                    $profiles = $instanceProfilesJson | ConvertFrom-Json
+                    foreach ($profile in $profiles) {
+                        Write-Host "    Removing role from instance profile: $profile" -ForegroundColor Gray
+                        aws iam remove-role-from-instance-profile --instance-profile-name $profile --role-name $role --region $Region 2>&1 | Out-Null
+                    }
+                } catch {
+                    Write-Host "    No instance profiles" -ForegroundColor Gray
+                }
+            }
+
+            # 4. Delete the role (with retry)
+            $retryCount = 0
+            $maxRetries = 5
+            $deleted = $false
+            while ($retryCount -lt $maxRetries -and -not $deleted) {
+                $retryCount++
+                Write-Host "    Deleting role (attempt $retryCount/$maxRetries)..." -ForegroundColor Gray
+                aws iam delete-role --role-name $role --region $Region 2>&1 | Out-Null
+                if ($LASTEXITCODE -eq 0) {
+                    Write-Host "    Deleted" -ForegroundColor Green
+                    $deleted = $true
+                } else {
+                    if ($retryCount -lt $maxRetries) {
+                        Write-Host "    Retrying in 5 seconds..." -ForegroundColor Yellow
+                        Start-Sleep -Seconds 5
+                    }
+                }
+            }
+            if (-not $deleted) {
+                Write-Host "    Could not delete role after $maxRetries attempts" -ForegroundColor Red
+            }
+        }
+    } catch {
+        Write-Host "  No IAM roles found" -ForegroundColor Gray
+    }
+} else {
+    Write-Host "  No IAM roles found" -ForegroundColor Gray
+}
+Write-Host ""
+
+# ============================================
 # DELETE CLOUDWATCH LOG GROUPS (AFTER STACK DELETION)
 # ============================================
 Write-Host "Deleting remaining CloudWatch Log Groups (after stack deletion)..." -ForegroundColor Yellow
@@ -542,6 +729,8 @@ Write-Host "  - CloudFormation stack: $StackName" -ForegroundColor Gray
 Write-Host "  - S3 buckets (emptied and deleted)" -ForegroundColor Gray
 Write-Host "  - CloudWatch Log Groups" -ForegroundColor Gray
 Write-Host "  - Associated resources (Lambda, DynamoDB, API Gateway, IoT)" -ForegroundColor Gray
+Write-Host "  - SNS Topics" -ForegroundColor Gray
+Write-Host "  - IAM Roles" -ForegroundColor Gray
 Write-Host ""
 Write-Host "Note: Some resources may take a few minutes to fully delete." -ForegroundColor Yellow
 Write-Host ""

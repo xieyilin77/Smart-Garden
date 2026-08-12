@@ -58,7 +58,7 @@ if (-not (Test-Path $CertDir)) {
 $existingCerts = Get-ChildItem $CertDir -Filter "*.crt" | Where-Object { $_.Name -ne "root-CA.crt" }
 if ($existingCerts) {
     Write-Host "   WARNING: Certificates already exist in $CertDir" -ForegroundColor Yellow
-    $regen = Read-Host "   Regenerate? (y/n)"
+    $regen = Read-Host "   use generated certificates? (y/n)"
     if ($regen -ne "y") {
         Write-Host "   OK: Using existing certificates" -ForegroundColor Green
     } else {
