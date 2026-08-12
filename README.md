@@ -563,7 +563,7 @@ push-based real-time streaming.
 scripts/deploy.ps1
 ```
 
-It is intentionally not a committed source file in the repository.
+The generated configuration contains the API URL from the deployed CloudFormation stack, sensor ID, timeout values, and refresh interval. The USE_MOCK_DATA flag is set to false for the deployed dashboard.
 
 The generated configuration contains values including:
 
@@ -684,7 +684,13 @@ The repository includes:
 scripts/setup_mqtt.ps1
 ```
 
-for MQTT-related setup.
+for MQTT-related setup. The script performs the following steps:
+
+1. Creates IoT certificates in `src/simulator/certs/`
+2. Downloads the Root CA certificate from Amazon
+3. Creates the IoT policy `smart-garden-iot-policy` with minimal permissions
+4. Attaches the policy to the certificate
+5. Generates the `.env` file using `generate_env.py`
 
 The simulator can then use the generated MQTT endpoint/certificate configuration.
 
@@ -871,7 +877,8 @@ Dashboard
     +----> statistics
     +----> history table
 
-Automatic polling: every 10 seconds
+Adaptive polling: 30s (day) / 45s (transition) / 60s (night)
+Refresh is paused while the browser tab is hidden
 ```
 
 ---
@@ -977,7 +984,7 @@ The current implementation provides an end-to-end serverless smart-garden protot
 - S3 raw-data archiving;
 - SNS threshold alerts;
 - API-based dashboard queries;
-- 10-second dashboard polling;
+- adaptive dashboard polling (30s/45s/60s based on time of day);
 - local simulator offline mode;
 - dashboard mock-data support;
 - CloudFormation infrastructure as code;
