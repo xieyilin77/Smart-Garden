@@ -34,15 +34,7 @@ function showToast(message, type = 'info', duration = 5000) {
         font-size: 0.9rem; display: flex; align-items: center; gap: 12px;
     `;
     
-    const icons = { 
-        info: 'ℹ️', 
-        success: '✅', 
-        warning: '⚠️', 
-        error: '❌' 
-    };
-    
     container.innerHTML = `
-        <span style="font-size:1.2rem;">${icons[type] || 'ℹ️'}</span>
         <span style="flex:1; word-break: break-word;">${message}</span>
         <button onclick="this.parentElement.remove()" style="background:none;border:none;color:rgba(255,255,255,0.5);cursor:pointer;font-size:1.2rem;padding:0 4px;">✕</button>
     `;
@@ -414,7 +406,7 @@ async function loadData() {
             currentHistory = data.history;
             updateUI(data);
             const count = data.count || data.history.length || 0;
-            showToast(`✅ Data updated (${count} records)`, 'success', 2000);
+           //showToast(`✅ Data updated (${count} records)`, 'success', 2000);
         } else {
             console.warn('⚠️ No data received - using fallback');
             data = generateMockData();
