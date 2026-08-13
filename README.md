@@ -55,6 +55,24 @@ Query Data Lambda
     |
     v
 DynamoDB Latest + History
+
+S3 Website Bucket (dashboard hosting)
+    |
+    +----------------------------------+
+    |                                  |
+    v                                  v
+S3 Website URL                  [OPTIONAL]
+(direct access)                 CloudFront Distribution
+                                    |
+                                    v
+                              Better performance
+                              HTTPS by default
+                              Caching & CDN
+                              ~$0.50-1.00/month
+
+User Access:
+  - Without CloudFront: http://bucket.s3-website-region.amazonaws.com
+  - With CloudFront:    https://d123.cloudfront.net
 ```
 
 ### Dashboard delivery
