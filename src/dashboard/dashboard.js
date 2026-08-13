@@ -595,6 +595,11 @@ function updateCurrentValues(latest) {
     document.getElementById('sensorStatus').textContent = ageText || '---';
     document.getElementById('sensorStatus').style.color = 
         dataAge < 5 ? '#27ae60' : dataAge < 30 ? '#f39c12' : '#e74c3c';
+
+    const sensorIdEl = document.getElementById('sensorIdDisplay');
+    if (sensorIdEl) {
+        sensorIdEl.textContent = latest.sensor_id || SENSOR_ID || '--';
+    }
     
     updateStatusBadge('tempStatus', temp, THRESHOLDS.temperature.low, THRESHOLDS.temperature.high, '°C');
     updateStatusBadge('humidityStatus', hum, THRESHOLDS.humidity.low, THRESHOLDS.humidity.high, '%');
